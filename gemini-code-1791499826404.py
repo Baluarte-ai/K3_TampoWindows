@@ -296,6 +296,7 @@ DEFAULT_RECETAS = [
         "filas": 3,
         "cols": 5,
         "piezas": 15,
+        "piezas_por_jig": 15,
         "delta_x": 25.0,
         "delta_y": 30.0,
         "velocidad": 100,
@@ -312,6 +313,7 @@ DEFAULT_RECETAS = [
         "filas": 2,
         "cols": 4,
         "piezas": 8,
+        "piezas_por_jig": 8,
         "delta_x": 30.0,
         "delta_y": 35.0,
         "velocidad": 120,
@@ -328,6 +330,7 @@ DEFAULT_RECETAS = [
         "filas": 4,
         "cols": 4,
         "piezas": 16,
+        "piezas_por_jig": 16,
         "delta_x": 20.0,
         "delta_y": 20.0,
         "velocidad": 110,
@@ -338,6 +341,25 @@ DEFAULT_RECETAS = [
         "imagen": os.path.join(BASE_DIR, "Assets", "cd87b1e8-6d7b-48fd-af44-a450125bdfd1.jpg")
     }
 ]
+
+def obtener_piezas_por_jig_receta(r):
+    """
+    Obtiene de manera 100% retrocompatible el número de piezas por jig de una receta.
+    Si el archivo config_hmi.json proviene de una copia de seguridad que no tiene 'piezas_por_jig',
+    toma 'piezas' o 'filas * cols' sin generar errores ni conflictos tras un git pull.
+    """
+    if not isinstance(r, dict):
+        return 1
+    try:
+        if "piezas_por_jig" in r and r["piezas_por_jig"] is not None and str(r["piezas_por_jig"]).strip() != "":
+            return max(1, int(float(str(r["piezas_por_jig"]).strip())))
+        if "piezas" in r and r["piezas"] is not None and str(r["piezas"]).strip() != "":
+            return max(1, int(float(str(r["piezas"]).strip())))
+        fil = max(1, int(r.get("filas", 3)))
+        col = max(1, int(r.get("cols", 5)))
+        return max(1, fil * col)
+    except Exception:
+        return 1
 
 config_actual = {
     "cero_guardado_x": 0.0,
@@ -376,13 +398,15 @@ def cargar_configuracion():
                         r_calibrado = True
                         r_corridas = max(1, r_corridas)
                         
+                    pz_jig = obtener_piezas_por_jig_receta(r)
                     r_norm = {
                         "nombre": r.get("nombre", "Receta"),
                         "pieza": r.get("pieza", "Pieza SMC"),
                         "modelo": r.get("modelo", "KSL-000"),
                         "filas": max(1, int(r.get("filas", 3))),
                         "cols": max(1, int(r.get("cols", 5))),
-                        "piezas": int(r.get("filas", 3)) * int(r.get("cols", 5)),
+                        "piezas": pz_jig,
+                        "piezas_por_jig": pz_jig,
                         "delta_x": float(r.get("delta_x", r.get("avance_x", 25.0))),
                         "delta_y": float(r.get("delta_y", r.get("avance_y", 30.0))),
                         "velocidad": int(r.get("velocidad", 100)),
@@ -653,6 +677,7 @@ caja_pos_y = StateCoord(0.0, eje="Y")
 matriz_filas = 3
 matriz_cols = 5
 matriz_total = matriz_filas * matriz_cols
+piezas_por_jig_actual = obtener_piezas_por_jig_receta(_rec_act_ini) if _rec_act_ini else 15
 matriz_delta_x = 25.0
 matriz_delta_y = 30.0
 matriz_dist_diag = round((matriz_delta_x**2 + matriz_delta_y**2)**0.5, 2)
@@ -662,6 +687,17 @@ pasada_actual_pieza = 1  # 1 o 2 pasadas según selección de tampos
 ultimo_plc_rx_x = 0.0
 ultimo_plc_rx_y = 0.0
 ultimo_plc_rx_ok = False
+
+def obtener_piezas_por_jig_actual():
+    """Retorna el número de piezas por jig configurado en la receta activa actual (con fallback seguro)"""
+    try:
+        rec_nom = config_actual.get("receta_activa", "")
+        rec_obj = next((r for r in config_actual.get("recetas", []) if r.get("nombre") == rec_nom), None)
+        if rec_obj:
+            return obtener_piezas_por_jig_receta(rec_obj)
+    except Exception:
+        pass
+    return max(1, int(piezas_por_jig_actual))
 
 def actualizar_coordenadas_matriz():
     """
@@ -832,14 +868,15 @@ def actualizar_imagen_pieza_proceso(ruta_img):
 
 def actualizar_ui_matriz():
     """Actualiza los títulos y badges con la dimensión actual y distancias entre puntos"""
-    dim_txt = f"{matriz_filas} × {matriz_cols} ({matriz_total} Piezas)"
+    pz_jig = obtener_piezas_por_jig_actual()
+    dim_txt = f"{matriz_filas} × {matriz_cols} ({pz_jig} Piezas/Jig)"
     dist_txt = f"X:{matriz_delta_x:.1f} mm | Y:{matriz_delta_y:.1f} mm"
     if 'lbl_proc_matriz_dim' in globals():
         lbl_proc_matriz_dim.configure(text=dim_txt)
     if 'lbl_proc_matriz_dist' in globals():
         lbl_proc_matriz_dist.configure(text=dist_txt)
     if 'lbl_matriz_dim_badge' in globals():
-        lbl_matriz_dim_badge.configure(text=f"📐 MATRIZ: {matriz_filas} × {matriz_cols} ({matriz_total} PTS)")
+        lbl_matriz_dim_badge.configure(text=f"📐 MATRIZ: {matriz_filas} × {matriz_cols} ({pz_jig} PZ/JIG)")
     if 'lbl_matriz_dist_badge' in globals():
         lbl_matriz_dist_badge.configure(text=f"↔ X: {matriz_delta_x:.1f} mm  |  ↕ Y: {matriz_delta_y:.1f} mm  |  ↗ Diag: {matriz_dist_diag:.1f} mm")
     if 'card_fixture' in globals() and hasattr(card_fixture, '_header_title'):
@@ -857,14 +894,28 @@ def mostrar_alerta_cambio_jig(nombre_receta):
         top_jig.geometry("490x310")
         top_jig.resizable(False, False)
         top_jig.configure(fg_color=BG_MAIN)
-        top_jig.transient(ventana)
-        top_jig.grab_set()
+        try:
+            top_jig.transient(ventana)
+        except Exception:
+            pass
         
         try:
             top_jig.update_idletasks()
             vx = ventana.winfo_x() + (ventana.winfo_width() // 2) - 245
             vy = ventana.winfo_y() + (ventana.winfo_height() // 2) - 155
             top_jig.geometry(f"+{max(0, vx)}+{max(0, vy)}")
+        except Exception:
+            pass
+
+        def _grab_top_jig():
+            try:
+                if top_jig.winfo_exists():
+                    top_jig.lift()
+                    top_jig.grab_set()
+            except Exception:
+                pass
+        try:
+            top_jig.after(80, _grab_top_jig)
         except Exception:
             pass
             
@@ -1460,7 +1511,7 @@ def cargar_receta_por_nombre(nombre_receta, mostrar_modal_aviso=True):
     - Muestra nombre, modelo, nombre de pieza e imagen en el panel principal
     - Redibuja el fixture y actualiza KPIs
     """
-    global matriz_filas, matriz_cols, matriz_total, matriz_delta_x, matriz_delta_y, matriz_dist_diag
+    global matriz_filas, matriz_cols, matriz_total, piezas_por_jig_actual, matriz_delta_x, matriz_delta_y, matriz_dist_diag
     global fixture_piezas_estado, indice_matriz_actual, cero_ha_sido_seteado, maquina_en_home
     global receta_actual_calibrada, cero_guardado_x, cero_guardado_y
     
@@ -1533,10 +1584,11 @@ def cargar_receta_por_nombre(nombre_receta, mostrar_modal_aviso=True):
         if 'f_cero_ind' in globals() and f_cero_ind:
             f_cero_ind.configure(fg_color="#FEF3C7", border_color="#FDE68A")
     
-    # 1. Geometría de matriz (configurable arbitrariamente)
+    # 1. Geometría de matriz (configurable arbitrariamente) y piezas por jig independientes
     matriz_filas = max(1, int(receta.get("filas", 3)))
     matriz_cols = max(1, int(receta.get("cols", 5)))
     matriz_total = matriz_filas * matriz_cols
+    piezas_por_jig_actual = obtener_piezas_por_jig_receta(receta)
     matriz_delta_x = float(receta.get("delta_x", 25.0))
     matriz_delta_y = float(receta.get("delta_y", 30.0))
     matriz_dist_diag = round((matriz_delta_x**2 + matriz_delta_y**2)**0.5, 2)
@@ -1615,6 +1667,8 @@ def resetear_variables_inicio(forzar_reseteo_referencias=False):
     global estado_pintar, estado_stop, estado_manual, cero_ha_sido_seteado, maquina_en_home
     global indice_matriz_actual, ultimo_estado_pintado, ultimo_estado_sensor_y
     global fixture_piezas_estado, segundos_sesion, pasada_actual_pieza
+    global contador_ciclos_completados, total_piezas_sesion_acum
+    global kpis_fin_hora_registrados, piezas_ok_registradas, piezas_nok_registradas, calidad_registrada
     
     # 1. Estados internos y contadores en 0
     estado_pintar = False
@@ -1628,6 +1682,14 @@ def resetear_variables_inicio(forzar_reseteo_referencias=False):
     ultimo_estado_pintado = False
     ultimo_estado_sensor_y = False
     segundos_sesion = 0
+    contador_ciclos_completados = 0
+    total_piezas_sesion_acum = 0
+    kpis_fin_hora_registrados = False
+    piezas_ok_registradas = 0
+    piezas_nok_registradas = 0
+    calidad_registrada = 100.0
+    if 'lbl_ciclo_badge' in globals() and lbl_ciclo_badge:
+        lbl_ciclo_badge.configure(text="🏁 CICLOS: 0")
     
     # 2. Coordenadas a 0.0 mm
     if 'caja_pos_x' in globals():
@@ -2424,13 +2486,27 @@ def abrir_teclado_numerico_paso():
     dlg.title("Ajustar Paso JOG")
     dlg.geometry("340x440")
     dlg.resizable(False, False)
-    dlg.transient(ventana)
-    dlg.grab_set()
+    try:
+        dlg.transient(ventana)
+    except Exception:
+        pass
     
     try:
         x = ventana.winfo_x() + (ventana.winfo_width() // 2) - 170
         y = ventana.winfo_y() + (ventana.winfo_height() // 2) - 220
         dlg.geometry(f"+{x}+{y}")
+    except Exception:
+        pass
+
+    def _grab_dlg_paso():
+        try:
+            if dlg.winfo_exists():
+                dlg.lift()
+                dlg.grab_set()
+        except Exception:
+            pass
+    try:
+        dlg.after(80, _grab_dlg_paso)
     except Exception:
         pass
         
@@ -2640,6 +2716,7 @@ def avanzar_siguiente_pieza_matriz():
     - Al completarse todas las piezas, marca el final de ciclo, retorna a Home y reinicia la matriz.
     """
     global indice_matriz_actual, estado_pintar, maquina_en_home, contador_ciclos_completados, pasada_actual_pieza
+    global total_piezas_sesion_acum, piezas_ok_registradas
     try:
         num_pasadas = int(config_actual.get("pasadas_tampo", 2))
         
@@ -2743,13 +2820,18 @@ def avanzar_siguiente_pieza_matriz():
                 nodos["PINTAR"].set_value(False)
             btn_pintar.configure(text="🎨\nINICIO DE\nPINTADO\n[OFF]", fg_color=COLOR_KOSTAL_NAVY, text_color="white", border_color="#CBD5E1")
             
-            # Incrementar y marcar final de un ciclo
+            # Incrementar y marcar final de un ciclo sumando las piezas por jig configuradas en la receta
             contador_ciclos_completados += 1
+            pz_jig_ciclo = obtener_piezas_por_jig_actual()
+            total_piezas_sesion_acum += pz_jig_ciclo
+            if kpis_fin_hora_registrados:
+                piezas_ok_registradas = max(0, total_piezas_sesion_acum - piezas_nok_registradas)
+            actualizar_kpis_fixture()
             if 'lbl_ciclo_badge' in globals():
                 lbl_ciclo_badge.configure(text=f"🏁 CICLOS: {contador_ciclos_completados}")
                 
             lbl_estado.configure(
-                text=f"🏁 FINAL DE UN CICLO #{contador_ciclos_completados}: Matriz completa ({len(matriz_coordenadas)} piezas × {num_pasadas} pasadas). Retornando a Home y reiniciando matriz...",
+                text=f"🏁 FINAL DE UN CICLO #{contador_ciclos_completados}: +{pz_jig_ciclo} piezas sumadas (Total: {total_piezas_sesion_acum}). Retornando a Home y reiniciando matriz...",
                 text_color=COLOR_OK
             )
             
@@ -3507,10 +3589,19 @@ def abrir_dialogo_seleccion_jig():
             top_jig.focus_force()
         except Exception:
             pass
+        def _grab_sel_jig():
+            try:
+                if top_jig.winfo_exists():
+                    top_jig.grab_set()
+            except Exception:
+                pass
         try:
             top_jig.grab_set()
         except Exception:
-            pass
+            try:
+                top_jig.after(80, _grab_sel_jig)
+            except Exception:
+                pass
         
         # Encabezado corporativo KOSTAL
         f_top_hdr = ctk.CTkFrame(top_jig, fg_color=COLOR_KOSTAL_NAVY, height=48, corner_radius=0)
@@ -3581,8 +3672,8 @@ def abrir_dialogo_seleccion_jig():
                     lbl_det_mod.configure(text=f"Modelo: {rec_obj.get('modelo', '')}")
                     fil = rec_obj.get("filas", 1)
                     col = rec_obj.get("cols", 1)
-                    tot = rec_obj.get("piezas", fil * col)
-                    lbl_det_mat.configure(text=f"Matriz Fixture: {fil} × {col} ({tot} Piezas)")
+                    tot = obtener_piezas_por_jig_receta(rec_obj)
+                    lbl_det_mat.configure(text=f"Matriz Fixture: {fil} × {col} ({tot} Piezas/Jig)")
                     lbl_det_dist.configure(text=f"Dist. C-C: ΔX={rec_obj.get('delta_x', 0):.1f} mm | ΔY={rec_obj.get('delta_y', 0):.1f} mm")
                     
                     ya_cal = bool(rec_obj.get("cero_calibrado", False) or rec_obj.get("corridas", 0) > 0 or ("cero_guardado_x" in rec_obj and "cero_guardado_y" in rec_obj))
@@ -4456,17 +4547,30 @@ piezas_nok_registradas = 0
 calidad_registrada = 100.0
 total_piezas_sesion_acum = 0
 
+_top_dialogo_fin_hora = None
+
 def abrir_dialogo_fin_de_hora():
-    global kpis_fin_hora_registrados, piezas_ok_registradas, piezas_nok_registradas, calidad_registrada
+    global kpis_fin_hora_registrados, piezas_ok_registradas, piezas_nok_registradas, calidad_registrada, _top_dialogo_fin_hora
     
     try:
+        if _top_dialogo_fin_hora is not None:
+            try:
+                if _top_dialogo_fin_hora.winfo_exists():
+                    _top_dialogo_fin_hora.destroy()
+            except Exception:
+                pass
+            _top_dialogo_fin_hora = None
+
         dialogo = ctk.CTkToplevel(ventana)
+        _top_dialogo_fin_hora = dialogo
         dialogo.title("Registro de Fin de Hora")
         dialogo.geometry("480x470")
         dialogo.resizable(False, False)
         dialogo.configure(fg_color=BG_MAIN)
-        dialogo.transient(ventana)
-        dialogo.grab_set()
+        try:
+            dialogo.transient(ventana)
+        except Exception:
+            pass
         centrar_ventana(dialogo, 480, 470)
         
         f_d_inner = ctk.CTkFrame(dialogo, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER_CARD)
@@ -4712,8 +4816,34 @@ def abrir_dialogo_fin_de_hora():
         dialogo.bind("<KP_Enter>", lambda e: (ocultar_teclado_nativo(), guardar_fin_hora(), "break")[2])
 
         # Poner foco directo en el campo NOK para que el operador solo escriba el número
-        entry_nok.focus_set()
-        entry_nok.select_range(0, tk.END)
+        def _reintentar_grab_fin_hora():
+            try:
+                if dialogo.winfo_exists():
+                    dialogo.grab_set()
+            except Exception:
+                pass
+
+        def _activar_modal_fin_hora():
+            try:
+                if not dialogo.winfo_exists():
+                    return
+                dialogo.deiconify()
+                dialogo.lift()
+                try:
+                    dialogo.grab_set()
+                except Exception:
+                    # En X11/Wayland (Linux) si aún no es viewable, reintentar tras mapearse
+                    try:
+                        dialogo.after(120, _reintentar_grab_fin_hora)
+                    except Exception:
+                        pass
+                entry_nok.focus_set()
+                entry_nok.select_range(0, tk.END)
+            except Exception:
+                pass
+
+        dialogo.update_idletasks()
+        dialogo.after(60, _activar_modal_fin_hora)
         
     except Exception as ex:
         print(f"Error al abrir diálogo de fin de hora: {ex}")
@@ -5072,7 +5202,7 @@ f_pz_txt.pack(side="left", fill="both", expand=True, padx=8, pady=4)
 
 lbl_proc_pieza = fila_info(f_pz_txt, "Pieza:", rec_obj_activa.get("pieza", "Bisel Frontal"), COLOR_KOSTAL_NAVY)
 lbl_proc_modelo = fila_info(f_pz_txt, "Modelo:", rec_obj_activa.get("modelo", "KSL-001"), TEXT_PRIMARY)
-lbl_proc_matriz_dim = fila_info(f_pz_txt, "Matriz Fixture:", f"{matriz_filas} × {matriz_cols} ({matriz_total} Pts)", mono=True)
+lbl_proc_matriz_dim = fila_info(f_pz_txt, "Matriz Fixture:", f"{matriz_filas} × {matriz_cols} ({obtener_piezas_por_jig_actual()} Piezas/Jig)", mono=True)
 lbl_proc_matriz_dist = fila_info(f_pz_txt, "Dist. C-C:", f"X:{matriz_delta_x:.1f} Y:{matriz_delta_y:.1f} mm", mono=True)
 
 # Thumbnail de la pieza
@@ -5426,9 +5556,7 @@ def actualizar_kpis_fixture():
     global total_piezas_sesion_acum
     ok_cnt = sum(1 for s in fixture_piezas_estado if s == "ok")
     
-    # Requisito: Las piezas se contabilizan POR JIG COMPLETO (cada ciclo de jig terminado = 1 pieza)
-    total_piezas_sesion_acum = contador_ciclos_completados
-    
+    # Requisito: El total de piezas acumula el "Número de Piezas por Jig" cada vez que termina un ciclo de jig
     if 'lbl_kpi_total' in globals() and lbl_kpi_total:
         lbl_kpi_total.configure(text=str(total_piezas_sesion_acum))
         
@@ -5436,7 +5564,7 @@ def actualizar_kpis_fixture():
         lbl_piezas_realizadas.configure(text=f"{ok_cnt:02d} / {matriz_total:02d}")
         
     if 'lbl_kpi_ok' in globals() and lbl_kpi_ok:
-        val_ok = piezas_ok_registradas if kpis_fin_hora_registrados else total_piezas_sesion_acum
+        val_ok = max(0, total_piezas_sesion_acum - piezas_nok_registradas) if kpis_fin_hora_registrados else total_piezas_sesion_acum
         lbl_kpi_ok.configure(text=str(val_ok))
 
 f_leg = ctk.CTkFrame(card_fixture, fg_color="transparent")
@@ -6736,7 +6864,7 @@ entry_rec_dy = ctk.CTkEntry(f_dist_inputs, width=85, height=42, corner_radius=8,
 entry_rec_dy.insert(0, "36.0")
 entry_rec_dy.pack(side="left", padx=4)
 
-# Fila 4: Coordenadas iniciales de origen (Set 0 / Pieza 01)
+# Fila 4: Coordenadas iniciales de origen (Set 0 / Pieza 01) + Rectángulo de Piezas por Jig
 ctk.CTkLabel(f_rec_form_grid, text="Coord. Inicial (Set 0):", font=(FONT_MAIN, 11, "bold"), text_color=TEXT_MUTED).grid(row=4, column=0, sticky="w", pady=6)
 f_coord_inputs = ctk.CTkFrame(f_rec_form_grid, fg_color="transparent")
 f_coord_inputs.grid(row=4, column=1, sticky="w", padx=6, pady=6)
@@ -6748,6 +6876,38 @@ ctk.CTkLabel(f_coord_inputs, text="Y0 (mm):", font=(FONT_MAIN, 11), text_color=T
 entry_rec_y0 = ctk.CTkEntry(f_coord_inputs, width=85, height=42, corner_radius=8, border_width=2, border_color="#CBD5E1", text_color=TEXT_PRIMARY, font=(FONT_MONO, 13, "bold"), justify="center")
 entry_rec_y0.insert(0, "0.00")
 entry_rec_y0.pack(side="left", padx=4)
+
+# Rectángulo destacado para pedir el Número de Piezas por Jig (independiente de la matriz)
+f_piezas_jig_box = ctk.CTkFrame(
+    f_rec_form_grid,
+    fg_color="#EFF6FF",
+    corner_radius=8,
+    border_width=2,
+    border_color="#0284C7"
+)
+f_piezas_jig_box.grid(row=3, rowspan=2, column=1, sticky="e", padx=(12, 10), pady=4)
+
+ctk.CTkLabel(
+    f_piezas_jig_box,
+    text="Piezas por Jig:",
+    font=(FONT_MAIN, 11, "bold"),
+    text_color="#0369A1"
+).pack(side="left", padx=(10, 6), pady=8)
+
+entry_rec_piezas_jig = ctk.CTkEntry(
+    f_piezas_jig_box,
+    width=82,
+    height=38,
+    corner_radius=6,
+    border_width=2,
+    border_color="#0284C7",
+    fg_color="#FFFFFF",
+    text_color=COLOR_KOSTAL_NAVY,
+    font=(FONT_MONO, 14, "bold"),
+    justify="center"
+)
+entry_rec_piezas_jig.insert(0, "15")
+entry_rec_piezas_jig.pack(side="left", padx=(0, 10), pady=8)
 
 ctk.CTkLabel(f_rec_form_grid, text="ℹ️ Coordenada de origen (P01) guardada al hacer 'Set 0' en JOG.", font=(FONT_MAIN, 10), text_color="#0369A1").grid(row=4, column=2, columnspan=2, sticky="w", padx=(14, 0), pady=6)
 
@@ -6832,6 +6992,9 @@ def limpiar_campos_receta():
     entry_rec_img.delete(0, tk.END)
     option_rec_filas.set("3")
     option_rec_cols.set("5")
+    if 'entry_rec_piezas_jig' in globals():
+        entry_rec_piezas_jig.delete(0, tk.END)
+        entry_rec_piezas_jig.insert(0, "15")
     lbl_rec_form_preview.configure(image=None, text="[Preview]")
     if 'f_rec_items_container' in globals():
         ventana.after(50, refrescar_lista_recetas_admin)
@@ -6849,13 +7012,15 @@ def guardar_o_actualizar_receta():
     try:
         filas = max(1, int(str(option_rec_filas.get()).strip()))
         cols = max(1, int(str(option_rec_cols.get()).strip()))
+        pz_jig_str = str(entry_rec_piezas_jig.get()).strip() if 'entry_rec_piezas_jig' in globals() else ""
+        piezas_jig = max(1, int(float(pz_jig_str))) if pz_jig_str else (filas * cols)
         dx = float(str(entry_rec_dx.get()).strip().replace(',', '.'))
         dy = float(str(entry_rec_dy.get()).strip().replace(',', '.'))
         vel = int(float(str(entry_rec_vel.get()).strip().replace(',', '.')))
         x0_val = float(str(entry_rec_x0.get()).strip().replace(',', '.')) if 'entry_rec_x0' in globals() else 0.0
         y0_val = float(str(entry_rec_y0.get()).strip().replace(',', '.')) if 'entry_rec_y0' in globals() else 0.0
     except ValueError:
-        messagebox.showerror("Error", "Verifique que filas, columnas, distancias, coordenadas iniciales y velocidad sean valores numéricos válidos.", parent=ventana)
+        messagebox.showerror("Error", "Verifique que filas, columnas, piezas por jig, distancias, coordenadas iniciales y velocidad sean valores numéricos válidos.", parent=ventana)
         return
         
     img_path = entry_rec_img.get().strip()
@@ -6866,7 +7031,8 @@ def guardar_o_actualizar_receta():
         "modelo": modelo,
         "filas": filas,
         "cols": cols,
-        "piezas": filas * cols,
+        "piezas": piezas_jig,
+        "piezas_por_jig": piezas_jig,
         "delta_x": round(dx, 2),
         "delta_y": round(dy, 2),
         "velocidad": vel,
@@ -7018,8 +7184,10 @@ entry_rec_dy.bind("<Return>", lambda e: (entry_rec_x0.focus_set(), "break")[1])
 entry_rec_dy.bind("<KP_Enter>", lambda e: (entry_rec_x0.focus_set(), "break")[1])
 entry_rec_x0.bind("<Return>", lambda e: (entry_rec_y0.focus_set(), "break")[1])
 entry_rec_x0.bind("<KP_Enter>", lambda e: (entry_rec_y0.focus_set(), "break")[1])
-entry_rec_y0.bind("<Return>", lambda e: (entry_rec_img.focus_set(), "break")[1])
-entry_rec_y0.bind("<KP_Enter>", lambda e: (entry_rec_img.focus_set(), "break")[1])
+entry_rec_y0.bind("<Return>", lambda e: (entry_rec_piezas_jig.focus_set(), "break")[1])
+entry_rec_y0.bind("<KP_Enter>", lambda e: (entry_rec_piezas_jig.focus_set(), "break")[1])
+entry_rec_piezas_jig.bind("<Return>", lambda e: (entry_rec_img.focus_set(), "break")[1])
+entry_rec_piezas_jig.bind("<KP_Enter>", lambda e: (entry_rec_img.focus_set(), "break")[1])
 entry_rec_img.bind("<Return>", lambda e: (ocultar_teclado_nativo(), guardar_o_actualizar_receta(), "break")[2])
 entry_rec_img.bind("<KP_Enter>", lambda e: (ocultar_teclado_nativo(), guardar_o_actualizar_receta(), "break")[2])
 
@@ -7063,6 +7231,9 @@ def editar_receta_formulario(r):
     entry_rec_mod.insert(0, r.get("modelo", ""))
     option_rec_filas.set(str(r.get("filas", 3)))
     option_rec_cols.set(str(r.get("cols", 5)))
+    if 'entry_rec_piezas_jig' in globals():
+        entry_rec_piezas_jig.delete(0, tk.END)
+        entry_rec_piezas_jig.insert(0, str(obtener_piezas_por_jig_receta(r)))
     entry_rec_dx.delete(0, tk.END)
     entry_rec_dx.insert(0, str(r.get("delta_x", 25.0)))
     entry_rec_dy.delete(0, tk.END)
@@ -7148,8 +7319,9 @@ def refrescar_lista_recetas_admin():
         # 3. PROGRAMA
         prog_id = prog_codes[idx % len(prog_codes)]
         ctk.CTkLabel(f_row, text=prog_id, font=(FONT_MONO, 11, "bold"), text_color="#0284C7").grid(row=0, column=2, sticky="ew", padx=2, pady=4)
-        # 4. MATRIZ
-        dim_txt = f"{r.get('filas', 3)}×{r.get('cols', 5)}"
+        # 4. MATRIZ Y PIEZAS POR JIG
+        pz_rec = obtener_piezas_por_jig_receta(r)
+        dim_txt = f"{r.get('filas', 3)}×{r.get('cols', 5)} ({pz_rec} pz)"
         ctk.CTkLabel(f_row, text=dim_txt, font=(FONT_MONO, 11), text_color=TEXT_PRIMARY).grid(row=0, column=3, sticky="ew", padx=2, pady=4)
         # 5. COORD. INICIAL (P01 / SET 0)
         cero_x = float(r.get("cero_guardado_x", 0.0))
