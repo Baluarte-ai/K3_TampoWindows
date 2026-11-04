@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw, ImageOps, ImageEnhance
 import customtkinter as ctk
 import pandas as pd
-from opcua import Client, ua
+from opcua import Client, Server, ua
 
 # Bandera para activar Modo Simulación (especialmente útil en Windows para pruebas sin PLC)
 MODO_SIM_WINDOWS = (
@@ -373,6 +373,8 @@ config_actual = {
     "usuarios": list(DEFAULT_USUARIOS),
     "ajustes_globales": {
         "plc_url": "opc.tcp://192.168.1.69:4840",
+        "ip_puerto_nube": "0.0.0.0",
+        "puerto_opc_nube": 4840,
         "tiempo_muestreo_ms": 100,
         "estacion_id": "EST-KOSTAL-04"
     }
@@ -539,6 +541,19 @@ def vincular_nodos_plc():
                         nodos["M_PINTAR"] = cliente.get_node(ruta_prg + "M_pintar")
                     except Exception:
                         nodos["M_PINTAR"] = MockNode(False)
+            # Nodos OPC UA de Contadores de Producción (Excel / Fin de Hora): PIEZAS_TOTALES, PIEZAS_OK, PIEZAS_NOK
+            for clave_nodo, variantes_nombre in [
+                ("PIEZAS_TOTALES", ["PIEZAS_TOTALES", "TOTAL_PIEZAS", "TOTAL"]),
+                ("PIEZAS_OK", ["PIEZAS_OK", "OK"]),
+                ("PIEZAS_NOK", ["PIEZAS_NOK", "NO_OK", "NOK"])
+            ]:
+                nodos[clave_nodo] = MockNode(0)
+                for nom_var in variantes_nombre:
+                    try:
+                        nodos[clave_nodo] = cliente.get_node(ruta_prg + nom_var)
+                        break
+                    except Exception:
+                        pass
             return True
         except Exception as e:
             print(f"Error vinculando nodos reales: {e}")
@@ -572,9 +587,131 @@ def vincular_nodos_plc():
         "TAMPO": MockNode(False),
         "SENSOR_X": MockNode(False),
         "SENSOR_Y": MockNode(False),
-        "S_TAMPO": MockNode(False)
+        "S_TAMPO": MockNode(False),
+        "PIEZAS_TOTALES": MockNode(0),
+        "PIEZAS_OK": MockNode(0),
+        "PIEZAS_NOK": MockNode(0)
     }
     return False
+
+# ==============================================================================
+# SERVIDOR OPC UA EN PUERTO ETHERNET 2 (DUAL-HOMING: RED DE PLANTA / NUBE - IT)
+# ==============================================================================
+# Expone las variables del Excel (Piezas_Totales, Piezas_OK, Piezas_NOK) hacia la
+# red corporativa/nube de KOSTAL sin mezclarla con la red OT del PLC (Puerto 1).
+IP_PUERTO_NUBE = config_actual.get("ajustes_globales", {}).get("ip_puerto_nube", "0.0.0.0")
+PUERTO_OPC_NUBE = int(config_actual.get("ajustes_globales", {}).get("puerto_opc_nube", 4840))
+
+servidor_opc_nube = None
+nodos_servidor_nube = {}
+
+def iniciar_servidor_opcua_nube(ip_bind=None, puerto_bind=None):
+    """
+    Inicia o reinicia el Servidor OPC UA local en el Puerto Ethernet 2 (Red IT / Nube).
+    Amarra (bindea) el endpoint a IP_PUERTO_NUBE (ej. 10.45.12.50) para aislar el tráfico.
+    """
+    global servidor_opc_nube, nodos_servidor_nube, IP_PUERTO_NUBE, PUERTO_OPC_NUBE
+    if ip_bind is not None:
+        IP_PUERTO_NUBE = str(ip_bind).strip() or "0.0.0.0"
+    if puerto_bind is not None:
+        try:
+            PUERTO_OPC_NUBE = int(puerto_bind)
+        except Exception:
+            PUERTO_OPC_NUBE = 4840
+
+    if servidor_opc_nube is not None:
+        try:
+            servidor_opc_nube.stop()
+        except Exception:
+            pass
+        servidor_opc_nube = None
+
+    def _arrancar_en_hilo():
+        global servidor_opc_nube, nodos_servidor_nube
+        for ip_intento in ([IP_PUERTO_NUBE, "0.0.0.0"] if IP_PUERTO_NUBE != "0.0.0.0" else ["0.0.0.0"]):
+            try:
+                srv = Server()
+                endpoint_url = f"opc.tcp://{ip_intento}:{PUERTO_OPC_NUBE}/freeopcua/server/"
+                srv.set_endpoint(endpoint_url)
+                srv.set_server_name("KOSTAL_HMI_Tampografiado_OPCUA_Server")
+
+                uri = "http://kostal.com/tampografiado"
+                idx = srv.register_namespace(uri)
+
+                objetos = srv.get_objects_node()
+                estacion_obj = objetos.add_object(idx, "Estacion_Kostal")
+
+                n_tot = estacion_obj.add_variable(ua.NodeId("Piezas_Totales", idx), "Piezas_Totales", 0, ua.VariantType.Int32)
+                n_ok  = estacion_obj.add_variable(ua.NodeId("Piezas_OK", idx), "Piezas_OK", 0, ua.VariantType.Int32)
+                n_nok = estacion_obj.add_variable(ua.NodeId("Piezas_NOK", idx), "Piezas_NOK", 0, ua.VariantType.Int32)
+
+                n_tot.set_writable()
+                n_ok.set_writable()
+                n_nok.set_writable()
+
+                srv.start()
+                servidor_opc_nube = srv
+                nodos_servidor_nube = {
+                    "Piezas_Totales": n_tot,
+                    "Piezas_OK": n_ok,
+                    "Piezas_NOK": n_nok
+                }
+                print(f"✓ Servidor OPC UA (Puerto 2 - Nube IT) activo en: {endpoint_url}")
+                break
+            except Exception as e_srv:
+                print(f"Aviso al iniciar Servidor OPC UA en {ip_intento}:{PUERTO_OPC_NUBE}: {e_srv}")
+
+    import threading
+    threading.Thread(target=_arrancar_en_hilo, daemon=True).start()
+
+iniciar_servidor_opcua_nube()
+
+def enviar_contadores_produccion_opcua(total_pz, ok_pz, nok_pz):
+    """
+    Actualiza las 3 variables de producción (Piezas Totales, Piezas OK y Piezas NO OK)
+    tanto en el Servidor OPC UA del Puerto Ethernet 2 (Nube IT) como en nodos del PLC si existen.
+    """
+    # 1. Publicar en el Servidor OPC UA del Puerto Ethernet 2 (Red de Planta / Nube IT)
+    if nodos_servidor_nube:
+        for clave_srv, val_srv in [
+            ("Piezas_Totales", int(total_pz)),
+            ("Piezas_OK", int(ok_pz)),
+            ("Piezas_NOK", int(nok_pz))
+        ]:
+            if clave_srv in nodos_servidor_nube:
+                try:
+                    nodos_servidor_nube[clave_srv].set_value(ua.Variant(int(val_srv), ua.VariantType.Int32))
+                except Exception:
+                    pass
+
+    # 2. Actualizar en diccionario de nodos local / PLC (si aplica)
+    for clave, valor in [
+        ("PIEZAS_TOTALES", int(total_pz)),
+        ("PIEZAS_OK", int(ok_pz)),
+        ("PIEZAS_NOK", int(nok_pz))
+    ]:
+        if clave in nodos:
+            try:
+                if plc_conectado:
+                    nodos[clave].set_value(ua.Variant(int(valor), ua.VariantType.Int32))
+                else:
+                    nodos[clave].set_value(int(valor))
+            except Exception:
+                pass
+
+def _extraer_host_puerto_opcua(opc_url):
+    """Extrae la IP/host y el puerto desde una URL opc.tcp://IP:PUERTO"""
+    try:
+        limpia = str(opc_url).strip()
+        if "://" in limpia:
+            limpia = limpia.split("://", 1)[1]
+        limpia = limpia.split("/", 1)[0]
+        if ":" in limpia:
+            h, p = limpia.split(":", 1)
+            return h.strip(), int(p.strip())
+        return limpia.strip(), 4840
+    except Exception:
+        return "192.168.1.69", 4840
 
 def _probar_socket_plc(host="192.168.1.69", port=4840, timeout=0.8):
     try:
@@ -586,17 +723,19 @@ def _probar_socket_plc(host="192.168.1.69", port=4840, timeout=0.8):
         return False
 
 def intentar_conectar_plc(timeout_seg=2.0):
-    """Intenta conectar al PLC WAGO y enlazar nodos de telemetría y control de forma rápida"""
-    global cliente, plc_conectado
+    """Intenta conectar al servidor OPC UA y enlazar nodos de telemetría y control de forma rápida"""
+    global cliente, plc_conectado, url
+    url = config_actual.get("ajustes_globales", {}).get("plc_url", "opc.tcp://192.168.1.69:4840")
     if MODO_SIM_WINDOWS:
         plc_conectado = False
         vincular_nodos_plc()
         print("Modo Simulación Windows: omitiendo conexión física al PLC.")
         return False
         
+    host_opc, port_opc = _extraer_host_puerto_opcua(url)
     # Verificación no bloqueante de socket (evita bloqueo de 30-60s del kernel TCP si no hay Ethernet)
-    if not _probar_socket_plc("192.168.1.69", 4840, timeout=0.8):
-        print("Aviso: PLC WAGO no responde al ping de socket (192.168.1.69:4840). Omitiendo intento bloqueante.")
+    if not _probar_socket_plc(host_opc, port_opc, timeout=0.8):
+        print(f"Aviso: Servidor OPC UA no responde al ping de socket ({host_opc}:{port_opc}). Omitiendo intento bloqueante.")
         plc_conectado = False
         vincular_nodos_plc()
         return False
@@ -611,7 +750,7 @@ def intentar_conectar_plc(timeout_seg=2.0):
         cliente.connect()
         plc_conectado = True
         vincular_nodos_plc()
-        print("Conexión exitosa con PLC WAGO (192.168.1.69:4840).")
+        print(f"Conexión exitosa con Servidor OPC UA ({host_opc}:{port_opc}).")
         return True
     except Exception as e:
         print(f"Aviso de conexión con PLC: {e}")
@@ -4747,6 +4886,9 @@ def abrir_dialogo_fin_de_hora():
                 piezas_nok_registradas = v_nok
                 calidad_registrada = cal
                 
+                # Enviar Piezas Totales, Piezas OK y Piezas NO OK por OPC UA
+                enviar_contadores_produccion_opcua(tot, v_ok, v_nok)
+                
                 # Actualizar visualmente la tarjeta de KPIs en la pantalla del operador
                 if 'lbl_kpi_total' in globals() and lbl_kpi_total:
                     lbl_kpi_total.configure(text=str(tot))
@@ -5566,6 +5708,7 @@ def actualizar_kpis_fixture():
     if 'lbl_kpi_ok' in globals() and lbl_kpi_ok:
         val_ok = max(0, total_piezas_sesion_acum - piezas_nok_registradas) if kpis_fin_hora_registrados else total_piezas_sesion_acum
         lbl_kpi_ok.configure(text=str(val_ok))
+        enviar_contadores_produccion_opcua(total_piezas_sesion_acum, val_ok, piezas_nok_registradas if kpis_fin_hora_registrados else 0)
 
 f_leg = ctk.CTkFrame(card_fixture, fg_color="transparent")
 f_leg.pack(fill="x", padx=10, pady=(2, 6))
@@ -7715,17 +7858,43 @@ def campo_config_hmi(parent, row, col, label_txt, val_default):
     entry.pack(fill="x")
     return entry
 
-entry_aj_proj   = campo_config_hmi(f_aj_inputs_grid, 0, 0, "Nombre del Proyecto", "KOSTAL HMI Dashboard Prototipo")
-entry_aj_est    = campo_config_hmi(f_aj_inputs_grid, 0, 1, "Código de la Estación", config_actual["ajustes_globales"].get("estacion_id", "EST-KOSTAL-04"))
-entry_aj_desc   = campo_config_hmi(f_aj_inputs_grid, 1, 0, "Descripción / Línea", "Línea de Ensamblado & Calidad KOSTAL")
-entry_aj_param  = campo_config_hmi(f_aj_inputs_grid, 1, 1, "Parámetro Calidad (Buena Pieza)", "0.5 mm")
-entry_aj_inact  = campo_config_hmi(f_aj_inputs_grid, 2, 0, "Límite de Inactividad (segundos)", "15")
-entry_aj_efec   = campo_config_hmi(f_aj_inputs_grid, 2, 1, "Efectividad Mínima (minutos por hora)", "15")
+entry_aj_proj      = campo_config_hmi(f_aj_inputs_grid, 0, 0, "Nombre del Proyecto", "KOSTAL HMI Dashboard Prototipo")
+entry_aj_est       = campo_config_hmi(f_aj_inputs_grid, 0, 1, "Código de la Estación", config_actual["ajustes_globales"].get("estacion_id", "EST-KOSTAL-04"))
+entry_aj_plc_url   = campo_config_hmi(f_aj_inputs_grid, 1, 0, "Puerto Ethernet 1 (PLC Local OT - URL)", config_actual["ajustes_globales"].get("plc_url", "opc.tcp://192.168.1.69:4840"))
+entry_aj_ip_nube   = campo_config_hmi(f_aj_inputs_grid, 1, 1, "IP Puerto Ethernet 2 (Servidor OPC UA Nube - IT)", config_actual["ajustes_globales"].get("ip_puerto_nube", "0.0.0.0"))
+entry_aj_inact     = campo_config_hmi(f_aj_inputs_grid, 2, 0, "Límite de Inactividad (segundos)", "15")
+entry_aj_efec      = campo_config_hmi(f_aj_inputs_grid, 2, 1, "Efectividad Mínima (minutos por hora)", "15")
 
 def guardar_ajustes_globales():
-    config_actual["ajustes_globales"]["estacion_id"] = entry_aj_est.get()
+    global url, IP_PUERTO_NUBE
+    config_actual["ajustes_globales"]["estacion_id"] = entry_aj_est.get().strip()
+    nueva_url = entry_aj_plc_url.get().strip()
+    if nueva_url:
+        if not nueva_url.startswith("opc.tcp://"):
+            nueva_url = f"opc.tcp://{nueva_url}"
+            if ":" not in nueva_url.split("opc.tcp://", 1)[1]:
+                nueva_url = f"{nueva_url}:4840"
+            entry_aj_plc_url.delete(0, tk.END)
+            entry_aj_plc_url.insert(0, nueva_url)
+        config_actual["ajustes_globales"]["plc_url"] = nueva_url
+        url = nueva_url
+
+    nueva_ip_nube = entry_aj_ip_nube.get().strip() or "0.0.0.0"
+    if nueva_ip_nube.startswith("opc.tcp://"):
+        nueva_ip_nube = nueva_ip_nube.split("opc.tcp://", 1)[1].split(":", 1)[0].split("/", 1)[0].strip()
+        entry_aj_ip_nube.delete(0, tk.END)
+        entry_aj_ip_nube.insert(0, nueva_ip_nube)
+    config_actual["ajustes_globales"]["ip_puerto_nube"] = nueva_ip_nube
+    IP_PUERTO_NUBE = nueva_ip_nube
+
     guardar_configuracion()
-    messagebox.showinfo("Ajustes Guardados", "Los parámetros de configuración del HMI han sido guardados correctamente.")
+    iniciar_servidor_opcua_nube(ip_bind=IP_PUERTO_NUBE)
+    messagebox.showinfo(
+        "Ajustes Guardados",
+        f"Parámetros guardados correctamente:\n\n"
+        f"• Puerto 1 (PLC OT): {url}\n"
+        f"• Puerto 2 (Servidor OPC UA Nube IT): opc.tcp://{IP_PUERTO_NUBE}:{PUERTO_OPC_NUBE}/freeopcua/server/"
+    )
 
 f_aj_btn_row = ctk.CTkFrame(card_aj_hmi, fg_color="transparent")
 f_aj_btn_row.pack(fill="x", padx=16, pady=(0, 14))
