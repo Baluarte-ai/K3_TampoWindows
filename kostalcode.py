@@ -10,18 +10,19 @@ import customtkinter as ctk
 import pandas as pd
 from opcua import Client, Server, ua
 
-# Bandera para activar Modo Simulación (especialmente útil en Windows para pruebas sin PLC)
+# Bandera para activar Modo Simulación explícito (al ejecutar simulacion_windows.py o pasar --sim).
+# En producción (tanto en Windows 10/11 como en Linux), kostalcode.py inicia en modo industrial
+# conectándose automáticamente al PLC WAGO (192.168.1.69:4840).
 MODO_SIM_WINDOWS = (
     os.environ.get("HMI_SIMULACION") == "1"
     or "--sim" in sys.argv
     or "--simulacion" in sys.argv
-    or (sys.platform == "win32" and os.environ.get("HMI_FORZAR_PLC") != "1")
 )
 
 # ==============================================================================
-# PARCHE DE SOPORTE PARA PANTALLAS TÁCTILES (LINUX / TOUCHSCREEN INDUSTRIAL)
+# PARCHE DE SOPORTE PARA PANTALLAS TÁCTILES (WINDOWS 10/11 & LINUX INDUSTRIAL)
 # ==============================================================================
-# En Linux y pantallas táctiles, los toques rápidos disparan <ButtonPress-1> y
+# En pantallas táctiles industriales, los toques rápidos disparan <ButtonPress-1> y
 # <ButtonRelease-1> sin generar previamente un evento de movimiento/hover (<Enter>).
 # CustomTkinter por defecto cancela los clics si `self._mouse_inside` es False.
 # Además, un ligero deslizamiento del dedo durante el toque activa <Leave>.
@@ -59,12 +60,26 @@ try:
                 except Exception:
                     pass
             threading.Thread(target=_async_ocultar, daemon=True).start()
+        elif sys.platform == "win32" and forzar:
+            import threading
+            def _async_ocultar_win():
+                try:
+                    import subprocess
+                    subprocess.run(
+                        ["taskkill", "/F", "/IM", "osk.exe"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+                        timeout=0.5
+                    )
+                except Exception:
+                    pass
+            threading.Thread(target=_async_ocultar_win, daemon=True).start()
 
     def _patched_btn_on_release(self, event=None):
         if self._state not in ("disabled", tk.DISABLED):
             ahora = time.time()
             ultimo = getattr(self, "_ultimo_toque_ts", 0)
-            if ahora - ultimo < 0.20:
+            if ahora - ultimo < 0.22:
                 return
             self._ultimo_toque_ts = ahora
             self._mouse_inside = True
@@ -73,18 +88,25 @@ try:
                 self.after(100, self._on_leave)
             except Exception:
                 pass
-            # Al tocar cualquier botón de acción, ocultar el teclado automáticamente
-            ocultar_teclado_nativo()
+            # Al tocar cualquier botón de acción, ocultar el teclado automáticamente si estaba abierto
+            if _estado_teclado_visible:
+                ocultar_teclado_nativo()
             if self._command is not None:
-                self._command()
+                # Ejecutar el comando diferido 15ms después para que el sistema gráfico libere primero
+                # el pointer grab implícito del toque táctil y nunca se congele la pantalla
+                try:
+                    self.after(15, self._command)
+                except Exception:
+                    self._command()
 
     _orig_btn_draw = ctk.CTkButton._draw
     def _patched_btn_draw(self, no_color_updates=False):
         _orig_btn_draw(self, no_color_updates)
-        try:
-            self.configure(cursor="none")
-        except Exception:
-            pass
+        if sys.platform.startswith("linux"):
+            try:
+                self.configure(cursor="none")
+            except Exception:
+                pass
         for w in [self._canvas, self._text_label, self._image_label]:
             if w is not None and not getattr(w, "_touch_press_bound", False):
                 w._touch_press_bound = True
@@ -96,7 +118,7 @@ try:
     ctk.CTkButton._on_release = _patched_btn_on_release
     ctk.CTkButton._draw = _patched_btn_draw
 
-    # Función para solicitar apertura del teclado escalado y asegurando que flote al frente (asíncrona y debounced)
+    # Función para solicitar apertura del teclado táctil en Windows 10/11 y Linux (asíncrona y debounced)
     _ultimo_invocar_teclado_ts = 0.0
     def invocar_teclado_nativo_ubuntu(e=None, forzar=False):
         global _estado_teclado_visible, _ultimo_invocar_teclado_ts
@@ -131,6 +153,23 @@ try:
                 except Exception:
                     pass
             threading.Thread(target=_async_mostrar, daemon=True).start()
+        elif sys.platform == "win32" and (forzar or not MODO_SIM_WINDOWS):
+            import threading
+            def _async_mostrar_win():
+                try:
+                    import subprocess
+                    tabtip_path = r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe"
+                    if os.path.exists(tabtip_path):
+                        os.startfile(tabtip_path)
+                    elif forzar:
+                        subprocess.Popen(
+                            ["osk.exe"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                        )
+                except Exception:
+                    pass
+            threading.Thread(target=_async_mostrar_win, daemon=True).start()
 
     def alternar_teclado_tactil():
         """Alterna visibilidad del teclado táctil con un solo toque del operador"""
@@ -280,6 +319,17 @@ def limitar_coord_y(valor):
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
 CONFIG_FILE = os.path.join(BASE_DIR, "config_hmi.json")
+DEBUG_LOG_FILE = os.path.join(BASE_DIR, "debug_hmi.log")
+
+def log_debug_hmi(mensaje):
+    """Registra eventos de ciclo, coordenadas, tiempos OPC UA y errores en debug_hmi.log sin bloquear la UI"""
+    try:
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        linea = f"[{ts}] {mensaje}\n"
+        with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f_log:
+            f_log.write(linea)
+    except Exception:
+        pass
 
 DEFAULT_USUARIOS = [
     {"num": "KOSTAL-0842", "nombre": "Juan Pérez", "rol": "OPERADOR", "pass": "1234", "tutorial_completado": True},
@@ -541,19 +591,14 @@ def vincular_nodos_plc():
                         nodos["M_PINTAR"] = cliente.get_node(ruta_prg + "M_pintar")
                     except Exception:
                         nodos["M_PINTAR"] = MockNode(False)
-            # Nodos OPC UA de Contadores de Producción (Excel / Fin de Hora): PIEZAS_TOTALES, PIEZAS_OK, PIEZAS_NOK
-            for clave_nodo, variantes_nombre in [
-                ("PIEZAS_TOTALES", ["PIEZAS_TOTALES", "TOTAL_PIEZAS", "TOTAL"]),
-                ("PIEZAS_OK", ["PIEZAS_OK", "OK"]),
-                ("PIEZAS_NOK", ["PIEZAS_NOK", "NO_OK", "NOK"])
-            ]:
-                nodos[clave_nodo] = MockNode(0)
-                for nom_var in variantes_nombre:
-                    try:
-                        nodos[clave_nodo] = cliente.get_node(ruta_prg + nom_var)
-                        break
-                    except Exception:
-                        pass
+            # Contadores de Producción (Excel / Fin de Hora): se exponen por el Servidor OPC UA (Puerto 2)
+            nodos["PIEZAS_TOTALES"] = MockNode(0)
+            nodos["PIEZAS_OK"] = MockNode(0)
+            nodos["PIEZAS_NOK"] = MockNode(0)
+            if '_ultima_vel_enviada' in globals():
+                globals()['_ultima_vel_enviada'] = None
+            if '_tags_nueva_pos_activos' in globals():
+                globals()['_tags_nueva_pos_activos'] = ["NUEVA_POS", "NUEVA_POSICION"]
             return True
         except Exception as e:
             print(f"Error vinculando nodos reales: {e}")
@@ -669,7 +714,8 @@ iniciar_servidor_opcua_nube()
 def enviar_contadores_produccion_opcua(total_pz, ok_pz, nok_pz):
     """
     Actualiza las 3 variables de producción (Piezas Totales, Piezas OK y Piezas NO OK)
-    tanto en el Servidor OPC UA del Puerto Ethernet 2 (Nube IT) como en nodos del PLC si existen.
+    en el Servidor OPC UA del Puerto Ethernet 2 (Nube IT) y en los nodos en memoria local,
+    sin enviar peticiones innecesarias al PLC WAGO (Puerto 1).
     """
     # 1. Publicar en el Servidor OPC UA del Puerto Ethernet 2 (Red de Planta / Nube IT)
     if nodos_servidor_nube:
@@ -684,7 +730,7 @@ def enviar_contadores_produccion_opcua(total_pz, ok_pz, nok_pz):
                 except Exception:
                     pass
 
-    # 2. Actualizar en diccionario de nodos local / PLC (si aplica)
+    # 2. Actualizar en diccionario de nodos en memoria local
     for clave, valor in [
         ("PIEZAS_TOTALES", int(total_pz)),
         ("PIEZAS_OK", int(ok_pz)),
@@ -692,10 +738,7 @@ def enviar_contadores_produccion_opcua(total_pz, ok_pz, nok_pz):
     ]:
         if clave in nodos:
             try:
-                if plc_conectado:
-                    nodos[clave].set_value(ua.Variant(int(valor), ua.VariantType.Int32))
-                else:
-                    nodos[clave].set_value(int(valor))
+                nodos[clave].set_value(int(valor))
             except Exception:
                 pass
 
@@ -882,6 +925,7 @@ def actualizar_coordenadas_matriz():
         dir_y = -1.0
 
     patron = config_actual.get("patron_pintado", "vertical")
+    piezas_truncadas = []
     if patron == "vertical":
         # Recorrido vertical en serpiente continua (siguiendo las flechas del usuario):
         # Columna 0 (par): baja de arriba hacia abajo (↓)
@@ -890,16 +934,30 @@ def actualizar_coordenadas_matriz():
         for c in range(matriz_cols):
             filas_iter = range(matriz_filas) if (c % 2 == 0) else reversed(range(matriz_filas))
             for r in filas_iter:
-                x = limitar_coord_x(x0 + dir_x * (c * dx))
-                y = limitar_coord_y(y0 + dir_y * (r * dy))
+                raw_x = x0 + dir_x * (c * dx)
+                raw_y = y0 + dir_y * (r * dy)
+                x = limitar_coord_x(raw_x)
+                y = limitar_coord_y(raw_y)
+                if abs(x - raw_x) > 0.01 or abs(y - raw_y) > 0.01:
+                    piezas_truncadas.append(f"P{len(matriz_coordenadas)+1:02d}(calc={raw_x:.1f},{raw_y:.1f}->lim={x:.1f},{y:.1f})")
                 matriz_coordenadas.append((round(x, 2), round(y, 2)))
     else:
         # Recorrido horizontal: fila por fila (de izquierda a derecha)
         for r in range(matriz_filas):
             for c in range(matriz_cols):
-                x = limitar_coord_x(x0 + dir_x * (c * dx))
-                y = limitar_coord_y(y0 + dir_y * (r * dy))
+                raw_x = x0 + dir_x * (c * dx)
+                raw_y = y0 + dir_y * (r * dy)
+                x = limitar_coord_x(raw_x)
+                y = limitar_coord_y(raw_y)
+                if abs(x - raw_x) > 0.01 or abs(y - raw_y) > 0.01:
+                    piezas_truncadas.append(f"P{len(matriz_coordenadas)+1:02d}(calc={raw_x:.1f},{raw_y:.1f}->lim={x:.1f},{y:.1f})")
                 matriz_coordenadas.append((round(x, 2), round(y, 2)))
+
+    if piezas_truncadas:
+        log_debug_hmi(
+            f"ADVERTENCIA MATRIZ ({matriz_filas}x{matriz_cols}, dX={dx}, dY={dy}, Set0={x0},{y0}): "
+            f"Coordenadas truncadas por límite físico (X_MAX={COORD_X_MAX}, Y_MAX={COORD_Y_MAX}): {', '.join(piezas_truncadas)}"
+        )
 
 actualizar_coordenadas_matriz()
 
@@ -1916,19 +1974,43 @@ USUARIOS_SISTEMA = config_actual.get("usuarios", DEFAULT_USUARIOS)
 # ==============================================================================
 # 3. FUNCIONES DE CONTROL
 # ==============================================================================
+_timers_pulsos = {}
+_timer_nueva_pos = None
+_tags_nueva_pos_activos = ["NUEVA_POS", "NUEVA_POSICION"]
+
 def enviar_pulso(nombre_variable, duracion_ms=350):
+    global _timers_pulsos
     try:
+        # Si había un pulso anterior pendiente en esta misma variable, cancelarlo y asegurar flanco bajo->alto
+        prev_id = _timers_pulsos.get(nombre_variable)
+        if prev_id is not None:
+            try:
+                ventana.after_cancel(prev_id)
+            except Exception:
+                pass
+            _timers_pulsos[nombre_variable] = None
+            try:
+                if plc_conectado:
+                    nodos[nombre_variable].set_value(ua.Variant(False, ua.VariantType.Boolean))
+                else:
+                    nodos[nombre_variable].set_value(False)
+            except Exception:
+                pass
+
         if plc_conectado:
             nodos[nombre_variable].set_value(ua.Variant(True, ua.VariantType.Boolean))
-            ventana.after(duracion_ms, lambda: _resetear_pulso(nombre_variable))
+            _timers_pulsos[nombre_variable] = ventana.after(duracion_ms, lambda: _resetear_pulso(nombre_variable))
         else:
             nodos[nombre_variable].set_value(True)
-            ventana.after(duracion_ms, lambda: nodos[nombre_variable].set_value(False))
+            _timers_pulsos[nombre_variable] = ventana.after(duracion_ms, lambda: _resetear_pulso(nombre_variable))
         lbl_estado.configure(text=f"✓ Pulso {nombre_variable} enviado ({duracion_ms}ms)", text_color=COLOR_OK)
     except Exception as e:
+        log_debug_hmi(f"ERROR en enviar_pulso({nombre_variable}): {e}")
         lbl_estado.configure(text=f"✗ Error en pulso {nombre_variable}: {e}", text_color=COLOR_NOK)
 
 def _resetear_pulso(nombre_variable):
+    global _timers_pulsos
+    _timers_pulsos[nombre_variable] = None
     try:
         if plc_conectado:
             nodos[nombre_variable].set_value(ua.Variant(False, ua.VariantType.Boolean))
@@ -1939,14 +2021,30 @@ def _resetear_pulso(nombre_variable):
 
 def activar_nueva_posicion(duracion_ms=500):
     """
-    Garantiza la activación certera de la señal de nueva posición en el PLC WAGO.
-    1. Activa tanto 'NUEVA_POS' como 'NUEVA_POSICION' para asegurar 100% compatibilidad
-       con la variable declarada en CODESYS.
-    2. Utiliza una duración de 500 ms para que el ciclo de escaneo del PLC la lea sin fallos.
-    3. Maneja excepciones individualmente para que no se bloquee si una variable no existe.
+    Garantiza la activación certera de la señal de nueva posición en el PLC WAGO sin encimar timers.
+    Cancela cualquier apagado previo pendiente y fuerza el flanco False -> True para que el R_TRIG
+    de CODESYS jamás pierda una pieza aunque las piezas sean consecutivas y rápidas.
     """
+    global _timer_nueva_pos, _tags_nueva_pos_activos
+    if _timer_nueva_pos is not None:
+        try:
+            ventana.after_cancel(_timer_nueva_pos)
+        except Exception:
+            pass
+        _timer_nueva_pos = None
+        for tag in list(_tags_nueva_pos_activos):
+            if tag in nodos:
+                try:
+                    if plc_conectado:
+                        nodos[tag].set_value(ua.Variant(False, ua.VariantType.Boolean))
+                    else:
+                        nodos[tag].set_value(False)
+                except Exception:
+                    pass
+
     activado_ok = False
-    for tag in ["NUEVA_POS", "NUEVA_POSICION"]:
+    tags_exitosos = []
+    for tag in list(_tags_nueva_pos_activos):
         if tag in nodos:
             try:
                 if plc_conectado:
@@ -1954,11 +2052,17 @@ def activar_nueva_posicion(duracion_ms=500):
                 else:
                     nodos[tag].set_value(True)
                 activado_ok = True
+                tags_exitosos.append(tag)
             except Exception:
                 pass
-                
+    if plc_conectado and tags_exitosos:
+        # Cachear únicamente los tags que sí existen en el PLC para evitar timeouts/excepciones en las siguientes piezas
+        _tags_nueva_pos_activos = tags_exitosos
+
     def _apagar_senales():
-        for tag in ["NUEVA_POS", "NUEVA_POSICION"]:
+        global _timer_nueva_pos
+        _timer_nueva_pos = None
+        for tag in list(_tags_nueva_pos_activos):
             if tag in nodos:
                 try:
                     if plc_conectado:
@@ -1968,7 +2072,7 @@ def activar_nueva_posicion(duracion_ms=500):
                 except Exception:
                     pass
                     
-    ventana.after(duracion_ms, _apagar_senales)
+    _timer_nueva_pos = ventana.after(duracion_ms, _apagar_senales)
     if activado_ok:
         lbl_estado.configure(text=f"✓ Señal NUEVA_POS activada ({duracion_ms}ms) en PLC", text_color=COLOR_OK)
 
@@ -2844,6 +2948,21 @@ def fijar_pasadas_tampo(num_pasadas):
             text_color=COLOR_OK
         )
 
+_timer_reintento_pieza = None
+_ultima_vel_enviada = None
+_cache_telemetria_plc = {
+    "POS_X": 0,
+    "POS_Y": 0,
+    "MANUAL": False,
+    "LISTO": False,
+    "M_ENE": False,
+    "M_SET": False,
+    "STOP": False,
+    "PE": False,
+    "ALARM_X": False,
+    "ALARM_Y": False,
+}
+
 def avanzar_siguiente_pieza_matriz():
     """
     Lógica CODESYS / Pintado:
@@ -2855,8 +2974,17 @@ def avanzar_siguiente_pieza_matriz():
     - Al completarse todas las piezas, marca el final de ciclo, retorna a Home y reinicia la matriz.
     """
     global indice_matriz_actual, estado_pintar, maquina_en_home, contador_ciclos_completados, pasada_actual_pieza
-    global total_piezas_sesion_acum, piezas_ok_registradas
+    global total_piezas_sesion_acum, piezas_ok_registradas, _timer_reintento_pieza
+    t_inicio_avance = time.perf_counter()
     try:
+        # Cancelar cualquier reintento previo pendiente para evitar colisión de pulsos
+        if _timer_reintento_pieza is not None:
+            try:
+                ventana.after_cancel(_timer_reintento_pieza)
+            except Exception:
+                pass
+            _timer_reintento_pieza = None
+
         num_pasadas = int(config_actual.get("pasadas_tampo", 2))
         
         # VERIFICACIÓN DE PASADAS POR PIEZA (1 o 2 Tampos)
@@ -2874,19 +3002,24 @@ def avanzar_siguiente_pieza_matriz():
             
             # Paso 3: Disparar solo si el PLC confirmó haber recibido y memorizado las coordenadas
             if pos_ok or not plc_conectado:
-                activar_nueva_posicion(duracion_ms=500)
-                enviar_pulso("CRUZETA", duracion_ms=350)
+                activar_nueva_posicion(duracion_ms=450)
+                enviar_pulso("CRUZETA", duracion_ms=320)
             else:
                 def _reintentar_disparo_p2():
+                    global _timer_reintento_pieza
+                    _timer_reintento_pieza = None
                     if enviar_datos(verificar_eco=True) or not plc_conectado:
-                        activar_nueva_posicion(duracion_ms=500)
-                        enviar_pulso("CRUZETA", duracion_ms=350)
-                ventana.after(60, _reintentar_disparo_p2)
+                        activar_nueva_posicion(duracion_ms=450)
+                        enviar_pulso("CRUZETA", duracion_ms=320)
+                _timer_reintento_pieza = ventana.after(55, _reintentar_disparo_p2)
             
             dibujar_fixture_moderno()
             actualizar_kpis_fixture()
-            if 'actualizar_telemetria_plc' in globals():
-                actualizar_telemetria_plc(px, py)
+            dt_ms = (time.perf_counter() - t_inicio_avance) * 1000.0
+            log_debug_hmi(
+                f"PASADA {pasada_actual_pieza}/{num_pasadas} | Pieza {indice_matriz_actual + 1}/{len(matriz_coordenadas)} "
+                f"| X={px:.2f} Y={py:.2f} | eco_ok={pos_ok} | dt={dt_ms:.1f}ms"
+            )
                 
             lbl_estado.configure(
                 text=f"🔁 Señal PINTADO recibida -> Repitiendo pasada {pasada_actual_pieza}/{num_pasadas} en Pieza {indice_matriz_actual + 1}/{len(matriz_coordenadas)}: X={px:.2f} Y={py:.2f} mm | NUEVA_POSICION activada ✓",
@@ -2896,6 +3029,7 @@ def avanzar_siguiente_pieza_matriz():
 
         # Pasadas completadas para esta pieza -> resetear contador de pasada y avanzar
         pasada_actual_pieza = 1
+        prev_coord = matriz_coordenadas[indice_matriz_actual] if (0 <= indice_matriz_actual < len(matriz_coordenadas)) else None
 
         # 1. Marcar pieza actual como procesada OK
         if indice_matriz_actual < len(fixture_piezas_estado):
@@ -2910,29 +3044,40 @@ def avanzar_siguiente_pieza_matriz():
                 fixture_piezas_estado[indice_matriz_actual] = "activa"
                 
             sig_x, sig_y = matriz_coordenadas[indice_matriz_actual]
+            if prev_coord is not None and abs(sig_x - prev_coord[0]) < 0.01 and abs(sig_y - prev_coord[1]) < 0.01:
+                log_debug_hmi(
+                    f"ALERTA COORDENADA IDÉNTICA: Pieza {indice_matriz_actual + 1} tiene exactamente la misma posición "
+                    f"(X={sig_x:.2f}, Y={sig_y:.2f}) que la Pieza {indice_matriz_actual} por truncamiento en límite X_MAX={COORD_X_MAX}"
+                )
+
             caja_pos_x.delete(0, tk.END); caja_pos_x.insert(0, f"{sig_x:.2f}")
             caja_pos_y.delete(0, tk.END); caja_pos_y.insert(0, f"{sig_y:.2f}")
             pos_ok = enviar_datos(verificar_eco=True)
             
             # Paso 3: Disparar solo si el PLC confirmó haber recibido y memorizado las coordenadas
             if pos_ok or not plc_conectado:
-                activar_nueva_posicion(duracion_ms=500)
-                enviar_pulso("CRUZETA", duracion_ms=350)
+                activar_nueva_posicion(duracion_ms=450)
+                enviar_pulso("CRUZETA", duracion_ms=320)
             else:
                 lbl_estado.configure(
                     text=f"⚠️ Señal PINTADO -> Pieza {indice_matriz_actual + 1}: Discrepancia temporal en PLC. Reintentando confirmación...",
                     text_color=COLOR_WARN
                 )
                 def _reintentar_disparo_sig():
+                    global _timer_reintento_pieza
+                    _timer_reintento_pieza = None
                     if enviar_datos(verificar_eco=True) or not plc_conectado:
-                        activar_nueva_posicion(duracion_ms=500)
-                        enviar_pulso("CRUZETA", duracion_ms=350)
-                ventana.after(60, _reintentar_disparo_sig)
+                        activar_nueva_posicion(duracion_ms=450)
+                        enviar_pulso("CRUZETA", duracion_ms=320)
+                _timer_reintento_pieza = ventana.after(55, _reintentar_disparo_sig)
             
             dibujar_fixture_moderno()
             actualizar_kpis_fixture()
-            if 'actualizar_telemetria_plc' in globals():
-                actualizar_telemetria_plc(sig_x, sig_y)
+            dt_ms = (time.perf_counter() - t_inicio_avance) * 1000.0
+            log_debug_hmi(
+                f"AVANCE PIEZA {indice_matriz_actual + 1}/{len(matriz_coordenadas)} (Pasada 1/{num_pasadas}) "
+                f"| X={sig_x:.2f} Y={sig_y:.2f} | eco_ok={pos_ok} | dt={dt_ms:.1f}ms"
+            )
                 
             rx_ok = ultimo_plc_rx_ok if 'ultimo_plc_rx_ok' in globals() else True
             if rx_ok:
@@ -2969,6 +3114,9 @@ def avanzar_siguiente_pieza_matriz():
             if 'lbl_ciclo_badge' in globals():
                 lbl_ciclo_badge.configure(text=f"🏁 CICLOS: {contador_ciclos_completados}")
                 
+            log_debug_hmi(
+                f"FIN DE CICLO #{contador_ciclos_completados} | +{pz_jig_ciclo} pz | Acum={total_piezas_sesion_acum}"
+            )
             lbl_estado.configure(
                 text=f"🏁 FINAL DE UN CICLO #{contador_ciclos_completados}: +{pz_jig_ciclo} piezas sumadas (Total: {total_piezas_sesion_acum}). Retornando a Home y reiniciando matriz...",
                 text_color=COLOR_OK
@@ -2992,6 +3140,7 @@ def avanzar_siguiente_pieza_matriz():
                 )
             ventana.after(1200, _reiniciar_matriz_post_ciclo)
     except Exception as e:
+        log_debug_hmi(f"ERROR en avanzar_siguiente_pieza_matriz: {e}")
         lbl_estado.configure(text=f"✗ Error al avanzar matriz: {e}", text_color=COLOR_NOK)
 
 def alternar_pintar():
@@ -3144,13 +3293,15 @@ def alternar_manual():
 
 def enviar_datos(verificar_eco=True):
     """
-    Patrón Read-Back Handshake (Escribir, Leer y Confirmar):
+    Patrón Read-Back Handshake (Escribir, Leer y Confirmar) sin bloquear el hilo de Tkinter:
     Paso 1 (Escribir): Envía las coordenadas en centésimas de mm (DINT) a POS_X y POS_Y del PLC.
-    Paso 2 (Leer/Eco): Inmediatamente lee de vuelta los registros del PLC para verificar que
-                       recibió exactamente el mismo número. Si hay fallo o discrepancia, reintenta
-                       la escritura para evitar que un retraso de red sea interpretado como 0.
+                       Solo envía VELOCIDAD_X/Y cuando cambia respecto al último valor enviado.
+    Paso 2 (Leer/Eco): Lee de vuelta POS_X y POS_Y en lote (sin time.sleep en el hilo GUI) para
+                       verificar la recepción y actualizar _cache_telemetria_plc en memoria.
     Paso 3 (Confirmar): Retorna True solo si el PLC memorizó exitosamente la posición.
     """
+    global _ultima_vel_enviada
+    t0 = time.perf_counter()
     try:
         val_x = limitar_coord_x(caja_pos_x.get())
         val_y = limitar_coord_y(caja_pos_y.get())
@@ -3168,44 +3319,55 @@ def enviar_datos(verificar_eco=True):
             velocidad_general = 100
             
         confirmado = False
-        max_reintentos = 3 if (plc_conectado and verificar_eco) else 1
+        max_reintentos = 2 if (plc_conectado and verificar_eco) else 1
         
         for intento in range(max_reintentos):
             if plc_conectado:
                 try:
-                    # 1. Escribir
+                    # 1. Escribir coordenadas (y velocidad solo si cambió para ahorrar 2 RTTs TCP por pieza)
                     nodos["POS_X"].set_value(ua.Variant(target_px, ua.VariantType.Int32))
                     nodos["POS_Y"].set_value(ua.Variant(target_py, ua.VariantType.Int32))
-                    nodos["VELOCIDAD_X"].set_value(ua.Variant(velocidad_general, ua.VariantType.UInt16))
-                    nodos["VELOCIDAD_Y"].set_value(ua.Variant(velocidad_general, ua.VariantType.UInt16))
+                    if _ultima_vel_enviada != velocidad_general:
+                        nodos["VELOCIDAD_X"].set_value(ua.Variant(velocidad_general, ua.VariantType.UInt16))
+                        nodos["VELOCIDAD_Y"].set_value(ua.Variant(velocidad_general, ua.VariantType.UInt16))
+                        _ultima_vel_enviada = velocidad_general
                 except Exception as e_w:
-                    print(f"Error escritura PLC (Intento {intento+1}): {e_w}")
-                    time.sleep(0.015)
+                    log_debug_hmi(f"ERROR escritura PLC (Intento {intento+1}): {e_w}")
                     continue
 
                 if not verificar_eco:
+                    _cache_telemetria_plc["POS_X"] = target_px
+                    _cache_telemetria_plc["POS_Y"] = target_py
                     confirmado = True
                     break
 
-                # 2. Leer (Eco) para verificar que el PLC memorizó exactamente los valores
+                # 2. Leer (Eco) en un solo paquete TCP si es posible, sin bloquear el hilo de Tkinter con sleep
                 try:
-                    time.sleep(0.012) # Pausa mínima para ciclo de scan del PLC
-                    eco_x = nodos["POS_X"].get_value()
-                    eco_y = nodos["POS_Y"].get_value()
+                    if cliente is not None:
+                        vals_eco = cliente.get_values([nodos["POS_X"], nodos["POS_Y"]])
+                        eco_x, eco_y = vals_eco[0], vals_eco[1]
+                    else:
+                        eco_x = nodos["POS_X"].get_value()
+                        eco_y = nodos["POS_Y"].get_value()
+                    _cache_telemetria_plc["POS_X"] = eco_x
+                    _cache_telemetria_plc["POS_Y"] = eco_y
                     if eco_x == target_px and eco_y == target_py:
                         confirmado = True
                         break
                     else:
-                        print(f"⚠️ Discrepancia en eco PLC ({intento+1}/{max_reintentos}): Esperado=(X:{target_px}, Y:{target_py}) vs Leído=(X:{eco_x}, Y:{eco_y}). Reintentando...")
-                        time.sleep(0.02)
+                        log_debug_hmi(
+                            f"DISCREPANCIA ECO PLC ({intento+1}/{max_reintentos}): "
+                            f"Esperado=({target_px},{target_py}) vs Leído=({eco_x},{eco_y})"
+                        )
                 except Exception as e_r:
-                    print(f"Error lectura eco PLC (Intento {intento+1}): {e_r}")
-                    time.sleep(0.015)
+                    log_debug_hmi(f"ERROR lectura eco PLC (Intento {intento+1}): {e_r}")
             else:
                 nodos["POS_X"].set_value(target_px)
                 nodos["POS_Y"].set_value(target_py)
                 nodos["VELOCIDAD_X"].set_value(velocidad_general)
                 nodos["VELOCIDAD_Y"].set_value(velocidad_general)
+                _cache_telemetria_plc["POS_X"] = target_px
+                _cache_telemetria_plc["POS_Y"] = target_py
                 confirmado = True
                 break
         
@@ -3216,9 +3378,14 @@ def enviar_datos(verificar_eco=True):
             
         if 'actualizar_telemetria_plc' in globals():
             actualizar_telemetria_plc(val_x, val_y)
+
+        dt_envio = (time.perf_counter() - t0) * 1000.0
+        if dt_envio > 80.0:
+            log_debug_hmi(f"LATENCIA ALTA en enviar_datos(X={val_x:.2f}, Y={val_y:.2f}): {dt_envio:.1f} ms")
             
         return confirmado
     except Exception as e:
+        log_debug_hmi(f"EXCEPCIÓN en enviar_datos: {e}")
         lbl_estado.configure(text=f"✗ Error al enviar datos: {e}", text_color=COLOR_NOK)
         return False
 
@@ -3315,9 +3482,9 @@ def actualizar_luz(label_widget, valor, texto_true, texto_false, color_true, col
 
 def actualizar_telemetria_plc(dest_x=None, dest_y=None):
     """
-    Lee en tiempo real los registros del PLC (POS_X, POS_Y) y compara con la coordenada de destino
-    para verificar fehacientemente si el PLC la recibió.
-    También diagnostica interlocks de movimiento (MANUAL, LISTO, M_ENE, STOP, ALARMAS).
+    Actualiza el panel de telemetría del PLC usando la caché en memoria (_cache_telemetria_plc)
+    alimentada por monitoreo_ciclico() y enviar_datos(), evitando realizar 10 lecturas TCP
+    síncronas individuales que congelaban el hilo principal de Tkinter.
     """
     global ultimo_plc_rx_x, ultimo_plc_rx_y, ultimo_plc_rx_ok
     try:
@@ -3329,8 +3496,8 @@ def actualizar_telemetria_plc(dest_x=None, dest_y=None):
         num_pz = (indice_matriz_actual + 1) if ('indice_matriz_actual' in globals() and 0 <= indice_matriz_actual < len(matriz_coordenadas)) else 1
         
         if plc_conectado:
-            rx_px = nodos["POS_X"].get_value()
-            rx_py = nodos["POS_Y"].get_value()
+            rx_px = int(_cache_telemetria_plc.get("POS_X", 0) or 0)
+            rx_py = int(_cache_telemetria_plc.get("POS_Y", 0) or 0)
             plc_x = round(rx_px / 100.0, 2)
             plc_y = round(rx_py / 100.0, 2)
             
@@ -3342,14 +3509,14 @@ def actualizar_telemetria_plc(dest_x=None, dest_y=None):
             ultimo_plc_rx_y = plc_y
             ultimo_plc_rx_ok = coincide
             
-            # Revisión de interlocks del PLC
-            is_manual = bool(leer_nodo("MANUAL", default=False))
-            is_listo = bool(leer_nodo("LISTO", default=False))
-            is_ene = bool(leer_nodo("M_ENE", default=False))
-            is_set = bool(leer_nodo("M_SET", default=False))
-            is_stop = bool(leer_nodo("STOP", default=False)) or bool(leer_nodo("PE", default=False))
-            alarm_x = bool(leer_nodo("ALARM_X", default=False))
-            alarm_y = bool(leer_nodo("ALARM_Y", default=False))
+            # Revisión de interlocks del PLC desde caché en memoria (0 llamadas TCP extra)
+            is_manual = bool(_cache_telemetria_plc.get("MANUAL", False))
+            is_listo = bool(_cache_telemetria_plc.get("LISTO", False))
+            is_ene = bool(_cache_telemetria_plc.get("M_ENE", False))
+            is_set = bool(_cache_telemetria_plc.get("M_SET", False))
+            is_stop = bool(_cache_telemetria_plc.get("STOP", False)) or bool(_cache_telemetria_plc.get("PE", False))
+            alarm_x = bool(_cache_telemetria_plc.get("ALARM_X", False))
+            alarm_y = bool(_cache_telemetria_plc.get("ALARM_Y", False))
             
             if 'lbl_tel_destino' in globals():
                 lbl_tel_destino.configure(
@@ -3431,7 +3598,7 @@ def actualizar_telemetria_plc(dest_x=None, dest_y=None):
 
 def probar_enviar_pieza_especifica(idx):
     """Permite probar y enviar individualmente cualquier pieza de la matriz directamente al PLC (solo en modo manual)"""
-    global indice_matriz_actual
+    global indice_matriz_actual, _timer_reintento_pieza
     if idx < 0 or idx >= len(matriz_coordenadas):
         return
     if not estado_manual:
@@ -3440,6 +3607,13 @@ def probar_enviar_pieza_especifica(idx):
             text_color=COLOR_WARN
         )
         return
+    if _timer_reintento_pieza is not None:
+        try:
+            ventana.after_cancel(_timer_reintento_pieza)
+        except Exception:
+            pass
+        _timer_reintento_pieza = None
+
     indice_matriz_actual = idx
     for k in range(len(fixture_piezas_estado)):
         if k < idx:
@@ -3454,18 +3628,19 @@ def probar_enviar_pieza_especifica(idx):
     caja_pos_y.delete(0, tk.END); caja_pos_y.insert(0, f"{py:.2f}")
     pos_ok = enviar_datos(verificar_eco=True)
     if pos_ok or not plc_conectado:
-        activar_nueva_posicion(duracion_ms=500)
-        enviar_pulso("CRUZETA", duracion_ms=350)
+        activar_nueva_posicion(duracion_ms=450)
+        enviar_pulso("CRUZETA", duracion_ms=320)
     else:
         def _reintentar_prueba_pieza():
+            global _timer_reintento_pieza
+            _timer_reintento_pieza = None
             if enviar_datos(verificar_eco=True) or not plc_conectado:
-                activar_nueva_posicion(duracion_ms=500)
-                enviar_pulso("CRUZETA", duracion_ms=350)
-        ventana.after(60, _reintentar_prueba_pieza)
+                activar_nueva_posicion(duracion_ms=450)
+                enviar_pulso("CRUZETA", duracion_ms=320)
+        _timer_reintento_pieza = ventana.after(55, _reintentar_prueba_pieza)
     
     dibujar_fixture_moderno()
     actualizar_kpis_fixture()
-    actualizar_telemetria_plc(px, py)
     
     lbl_estado.configure(
         text=f"🧪 Prueba Pieza {idx+1}/{matriz_total}: Enviando X={px:.2f} Y={py:.2f} mm a PLC... Pulso CRUZETA emitido.",
@@ -3473,17 +3648,23 @@ def probar_enviar_pieza_especifica(idx):
     )
 
 _contador_ciclo_telemetria = 0
+_monitoreo_en_curso = False
+
 def monitoreo_ciclico():
-    global ultimo_estado_pintado, ultimo_estado_sensor_y, _contador_ciclo_telemetria
+    global ultimo_estado_pintado, ultimo_estado_sensor_y, _contador_ciclo_telemetria, _monitoreo_en_curso
+    if _monitoreo_en_curso:
+        return
+    _monitoreo_en_curso = True
     try:
         if plc_conectado:
-            # OPTIMIZACIÓN INDUSTRIAL: Leer todos los nodos de estado en un solo paquete TCP (10-15 ms)
-            # Evita retrasos de red que causaban pérdida aleatoria del pulso de PINTADO
+            # OPTIMIZACIÓN INDUSTRIAL: Leer todos los nodos de estado y telemetría en un solo paquete TCP (10-15 ms)
+            # Evita retrasos de red que causaban pérdida aleatoria del pulso de PINTADO o congelamiento táctil
             try:
                 nodos_mon = [
                     nodos["PINTADO"], nodos["M_ENE"], nodos["M_SET"], nodos["LISTO"],
                     nodos["NO_LISTO"], nodos["ALARM_X"], nodos["ALARM_Y"], nodos["PE"],
-                    nodos["SENSOR_X"], nodos["SENSOR_Y"], nodos["TAMPO"]
+                    nodos["SENSOR_X"], nodos["SENSOR_Y"], nodos["TAMPO"],
+                    nodos["POS_X"], nodos["POS_Y"], nodos["MANUAL"], nodos["STOP"]
                 ]
                 vals = cliente.get_values(nodos_mon)
                 pintado_actual = bool(vals[0])
@@ -3497,7 +3678,12 @@ def monitoreo_ciclico():
                 sensor_x_val   = bool(vals[8])
                 sensor_y_val   = bool(vals[9])
                 tampo_val      = vals[10]
-            except Exception:
+                pos_x_val      = vals[11]
+                pos_y_val      = vals[12]
+                manual_val     = vals[13]
+                stop_val       = vals[14]
+            except Exception as e_mon:
+                log_debug_hmi(f"AVISO monitoreo_ciclico fallback lectura individual: {e_mon}")
                 pintado_actual = bool(leer_nodo("PINTADO", default=False))
                 m_ene_val      = leer_nodo("M_ENE")
                 m_set_val      = leer_nodo("M_SET")
@@ -3509,6 +3695,10 @@ def monitoreo_ciclico():
                 sensor_x_val   = bool(leer_nodo("SENSOR_X", default=False))
                 sensor_y_val   = bool(leer_nodo("SENSOR_Y", default=False))
                 tampo_val      = leer_nodo("TAMPO")
+                pos_x_val      = _cache_telemetria_plc.get("POS_X", 0)
+                pos_y_val      = _cache_telemetria_plc.get("POS_Y", 0)
+                manual_val     = _cache_telemetria_plc.get("MANUAL", False)
+                stop_val       = estado_stop
         else:
             pintado_actual = bool(nodos["PINTADO"].get_value())
             m_ene_val      = nodos["M_ENE"].get_value()
@@ -3521,6 +3711,22 @@ def monitoreo_ciclico():
             sensor_x_val   = bool(nodos["SENSOR_X"].get_value())
             sensor_y_val   = bool(nodos["SENSOR_Y"].get_value())
             tampo_val      = nodos["TAMPO"].get_value()
+            pos_x_val      = nodos["POS_X"].get_value()
+            pos_y_val      = nodos["POS_Y"].get_value()
+            manual_val     = nodos["MANUAL"].get_value()
+            stop_val       = nodos["STOP"].get_value()
+
+        # Actualizar caché de telemetría en memoria
+        _cache_telemetria_plc["M_ENE"]   = bool(m_ene_val)
+        _cache_telemetria_plc["M_SET"]   = bool(m_set_val)
+        _cache_telemetria_plc["LISTO"]   = bool(listo_val)
+        _cache_telemetria_plc["ALARM_X"] = bool(alarm_x_val)
+        _cache_telemetria_plc["ALARM_Y"] = bool(alarm_y_val)
+        _cache_telemetria_plc["PE"]      = bool(pe_val)
+        _cache_telemetria_plc["POS_X"]   = pos_x_val
+        _cache_telemetria_plc["POS_Y"]   = pos_y_val
+        _cache_telemetria_plc["MANUAL"]  = bool(manual_val)
+        _cache_telemetria_plc["STOP"]    = bool(stop_val)
 
         # Actualizar indicadores visuales
         actualizar_luz(lbl_pintado, pintado_actual, "TINTA APLICADA", "ESPERANDO PINTADO...", COLOR_OK, "#F8FAFC", "white", "#334155")
@@ -3537,13 +3743,13 @@ def monitoreo_ciclico():
 
         # DETECCIÓN DE FLANCO: Cuando PINTADO se activa, avanza a la siguiente coordenada
         if pintado_actual and not ultimo_estado_pintado and not estado_stop:
-            avanzar_siguiente_pieza_matriz()
-            # Handshake de confirmación en el PLC si corresponde
+            # Handshake de confirmación en el PLC primero para liberar el registro PINTADO
             if plc_conectado:
                 try:
                     nodos["PINTADO"].set_value(ua.Variant(False, ua.VariantType.Boolean))
-                except Exception:
-                    pass
+                except Exception as e_p:
+                    log_debug_hmi(f"ERROR reseteando PINTADO=False: {e_p}")
+            avanzar_siguiente_pieza_matriz()
         # En modo simulación Windows: avance automático opcional para pruebas
         if MODO_SIM_WINDOWS and _auto_sim_activo and estado_pintar and not estado_stop:
             global _ticks_auto_sim
@@ -3555,13 +3761,15 @@ def monitoreo_ciclico():
         ultimo_estado_pintado = pintado_actual
         ultimo_estado_sensor_y = sensor_y_val
         
-        # Telemetría cada ~400ms (5 ciclos)
+        # Telemetría cada ~400ms (5 ciclos) usando caché en memoria (0 paquetes TCP extra)
         _contador_ciclo_telemetria = (_contador_ciclo_telemetria + 1) % 5
         if _contador_ciclo_telemetria == 0:
             actualizar_telemetria_plc()
-    except Exception:
-        pass
-    ventana.after(80, monitoreo_ciclico)
+    except Exception as e_ciclo:
+        log_debug_hmi(f"EXCEPCIÓN en monitoreo_ciclico: {e_ciclo}")
+    finally:
+        _monitoreo_en_curso = False
+        ventana.after(80, monitoreo_ciclico)
 
 _auto_sim_activo = False
 _ticks_auto_sim = 0
@@ -4090,7 +4298,7 @@ else:
     ventana.minsize(1280, 720)
 
 ventana.configure(fg_color=BG_MAIN)
-if not MODO_SIM_WINDOWS:
+if not MODO_SIM_WINDOWS and sys.platform.startswith("linux"):
     try:
         ventana.config(cursor="none")
     except Exception:

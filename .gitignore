@@ -5,6 +5,9 @@ __pycache__/
 
 # Backups and temp files
 *.bak
+*.tmp
+~$*
+debug_hmi.log
 desktop.ini
 .DS_Store
 

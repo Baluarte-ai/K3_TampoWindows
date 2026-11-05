@@ -38,10 +38,12 @@ print("=" * 72 + "\n")
 import runpy
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
-script_principal = os.path.join(base_dir, "gemini-code-1791499826404.py")
+script_principal = os.path.join(base_dir, "kostalcode.py")
+if not os.path.exists(script_principal):
+    script_principal = os.path.join(base_dir, "gemini-code-1791499826404.py")
 
 if not os.path.exists(script_principal):
-    print(f"Error: No se encontró el archivo principal en: {script_principal}")
+    print(f"Error: No se encontró el archivo principal (kostalcode.py) en: {base_dir}")
     input("Presione Enter para salir...")
     sys.exit(1)
 
