@@ -1,5 +1,6 @@
-customtkinter>=5.2.0
+# Dependencias Oficiales HMI KOSTAL (Windows 10/11)
+customtkinter>=5.2.2
+Pillow>=10.0.0
 opcua>=0.98.13
-pillow>=10.0.0
-pandas>=2.0.0
-openpyxl>=3.1.0
+cryptography>=41.0.0
+openpyxl>=3.1.2

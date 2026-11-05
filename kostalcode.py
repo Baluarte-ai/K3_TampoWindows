@@ -52,26 +52,39 @@ try:
                     pass
             threading.Thread(target=_async_ocultar_win, daemon=True).start()
 
-    def _patched_btn_on_release(self, event=None):
-        if self._state not in ("disabled", tk.DISABLED):
-            ahora = time.time()
-            ultimo = getattr(self, "_ultimo_toque_ts", 0)
-            if ahora - ultimo < 0.22:
-                return
-            self._ultimo_toque_ts = ahora
-            self._mouse_inside = True
+    def _cfg_si_cambio(widget, **kwargs):
+        """Actualiza un widget CustomTkinter solo si alguno de los atributos realmente cambió, evitando repintados innecesarios."""
+        if widget is None:
+            return
+        cache = getattr(widget, "_cfg_cache_win", None)
+        if cache is None:
+            cache = {}
             try:
-                self._on_enter()
-                self.after(100, self._on_leave)
+                widget._cfg_cache_win = cache
             except Exception:
                 pass
+        cambios = {k: v for k, v in kwargs.items() if cache.get(k) != v}
+        if cambios:
+            cache.update(cambios)
+            try:
+                widget.configure(**cambios)
+            except Exception:
+                pass
+
+    def _patched_btn_on_release(self, event=None):
+        if self._state not in ("disabled", tk.DISABLED):
+            ahora = time.perf_counter()
+            ultimo = getattr(self, "_ultimo_toque_ts", 0.0)
+            if ahora - ultimo < 0.07:
+                return
+            self._ultimo_toque_ts = ahora
             # Al tocar cualquier botón de acción, ocultar el teclado automáticamente si estaba abierto
             if _estado_teclado_visible:
                 ocultar_teclado_nativo()
             if self._command is not None:
-                # Ejecutar el comando diferido 15ms después para liberar el evento táctil inmediatamente
+                # Ejecutar el comando diferido 5ms después para respuesta táctil instantánea en Windows
                 try:
-                    self.after(15, self._command)
+                    self.after(5, self._command)
                 except Exception:
                     self._command()
 
@@ -186,8 +199,23 @@ except Exception as _e_patch:
     print(f"Aviso: No se pudo aplicar parche táctil: {_e_patch}")
 
 # ==============================================================================
-# CONFIGURACIÓN VISUAL MODERNA HMI KOSTAL (CUSTOMTKINTER INDUSTRIAL)
+# CONFIGURACIÓN VISUAL MODERNA HMI KOSTAL (CUSTOMTKINTER INDUSTRIAL 1920x1080)
 # ==============================================================================
+try:
+    import ctypes
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    try:
+        import ctypes
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+try:
+    ctk.deactivate_automatic_dpi_awareness()
+except Exception:
+    pass
+
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
@@ -277,10 +305,10 @@ def log_debug_hmi(mensaje):
         pass
 
 DEFAULT_USUARIOS = [
-    {"num": "KOSTAL-0842", "nombre": "Juan Pérez", "rol": "OPERADOR", "pass": "1234", "tutorial_completado": True},
-    {"num": "KOSTAL-0001", "nombre": "Carlos Hernández", "rol": "ADMIN", "pass": "admin", "tutorial_completado": True},
-    {"num": "KOSTAL-0913", "nombre": "María López", "rol": "OPERADOR", "pass": "1234", "tutorial_completado": True},
-    {"num": "KOSTAL-1052", "nombre": "Pedro Picapiedra", "rol": "OPERADOR", "pass": "1234", "tutorial_completado": True}
+    {"num": "KOSTAL-0842", "nombre": "Juan Pérez", "rol": "OPERADOR", "pass": "1234"},
+    {"num": "KOSTAL-0001", "nombre": "Carlos Hernández", "rol": "ADMIN", "pass": "admin"},
+    {"num": "KOSTAL-0913", "nombre": "María López", "rol": "OPERADOR", "pass": "1234"},
+    {"num": "KOSTAL-1052", "nombre": "Pedro Picapiedra", "rol": "OPERADOR", "pass": "1234"}
 ]
 
 DEFAULT_RECETAS = [
@@ -421,10 +449,6 @@ def cargar_configuracion():
                     
                 if "usuarios" not in config_actual or not config_actual["usuarios"]:
                     config_actual["usuarios"] = list(DEFAULT_USUARIOS)
-                else:
-                    for u in config_actual["usuarios"]:
-                        if "tutorial_completado" not in u:
-                            u["tutorial_completado"] = True
                     
                 print("Configuración persistente, recetas y usuarios cargados desde disco.")
         except Exception as e:
@@ -938,13 +962,15 @@ def cargar_imagen(nombre_archivo, max_ancho, max_alto):
 
 _img_pieza_cache = None
 _fixture_circle_img_cache = {}
+_pil_base_img_cache = {}
+_circle_mask_cache = {}
 
 def obtener_imagen_circular_pieza(ruta_img, diametro, estado="pendiente"):
     """
-    Genera y almacena en caché una imagen circular de alta definición de la pieza
-    con máscara antialiasing y filtro según su estado (pendiente, activa, OK, NOK).
+    Genera y almacena en caché en RAM una imagen circular de alta definición de la pieza
+    con máscara antialiasing y filtro según su estado, evitando lecturas de disco repetitivas.
     """
-    global _fixture_circle_img_cache
+    global _fixture_circle_img_cache, _pil_base_img_cache, _circle_mask_cache
     if diametro <= 4:
         return None
     cache_key = (ruta_img, diametro, estado)
@@ -956,9 +982,15 @@ def obtener_imagen_circular_pieza(ruta_img, diametro, estado="pendiente"):
         return None
         
     try:
-        img_orig = Image.open(real_path).convert("RGBA")
         d_render = max(diametro * 2, 72)
-        img_sq = ImageOps.fit(img_orig, (d_render, d_render), Image.Resampling.LANCZOS)
+        sq_key = (real_path, d_render)
+        if sq_key in _pil_base_img_cache:
+            img_sq = _pil_base_img_cache[sq_key].copy()
+        else:
+            if real_path not in _pil_base_img_cache:
+                _pil_base_img_cache[real_path] = Image.open(real_path).convert("RGBA")
+            img_sq = ImageOps.fit(_pil_base_img_cache[real_path], (d_render, d_render), Image.Resampling.BILINEAR)
+            _pil_base_img_cache[sq_key] = img_sq.copy()
         
         # Filtro de color sutil según el estado de la pieza
         if estado == "ok":
@@ -974,15 +1006,19 @@ def obtener_imagen_circular_pieza(ruta_img, diametro, estado="pendiente"):
             enh = ImageEnhance.Brightness(img_sq)
             img_sq = enh.enhance(0.95)
             
-        # Máscara circular con antialiasing
-        mask = Image.new('L', (d_render, d_render), 0)
-        draw = ImageDraw.Draw(mask)
-        draw.ellipse((1, 1, d_render - 2, d_render - 2), fill=255)
+        # Máscara circular cacheada en memoria con antialiasing
+        if d_render not in _circle_mask_cache:
+            mask = Image.new('L', (d_render, d_render), 0)
+            draw = ImageDraw.Draw(mask)
+            draw.ellipse((1, 1, d_render - 2, d_render - 2), fill=255)
+            _circle_mask_cache[d_render] = mask
+        else:
+            mask = _circle_mask_cache[d_render]
         
         circular = Image.new('RGBA', (d_render, d_render), (0, 0, 0, 0))
         circular.paste(img_sq, (0, 0), mask=mask)
         
-        final_img = circular.resize((diametro, diametro), Image.Resampling.LANCZOS)
+        final_img = circular.resize((diametro, diametro), Image.Resampling.BILINEAR)
         photo = ImageTk.PhotoImage(final_img)
         _fixture_circle_img_cache[cache_key] = photo
         return photo
@@ -1028,7 +1064,6 @@ def mostrar_alerta_cambio_jig(nombre_receta):
     """
     Aviso modal al cambiar de Jig / Receta:
     Informa que SOLO se requiere el setteo del cero ('Set 0') y el regreso a home ('Ir a home').
-    No requiere repetir el tutorial completo.
     """
     try:
         top_jig = ctk.CTkToplevel(ventana)
@@ -1083,8 +1118,7 @@ def mostrar_alerta_cambio_jig(nombre_receta):
             f_inst,
             text="Para este nuevo Jig ÚNICAMENTE debe realizar dos pasos:\n\n"
                  "1. Mover el cabezal a la Pieza 01 y presionar  '↩ Set 0'\n"
-                 "2. Presionar el botón  '🏠 Ir a home'  para sincronizar\n\n"
-                 "(No se requiere volver a realizar el tutorial completo)",
+                 "2. Presionar el botón  '🏠 Ir a home'  para sincronizar",
             font=(FONT_MAIN, 9, "bold"),
             text_color="#92400E",
             justify="left",
@@ -1118,531 +1152,81 @@ def mostrar_alerta_cambio_jig(nombre_receta):
         print(f"Error abriendo modal de cambio de jig: {e}")
 
 # ==============================================================================
-# GUÍA Y TUTORIAL INTERACTIVO PASO A PASO EN LA INTERFAZ (HUD + RESALTADO)
+# RESALTADO VISUAL DE CONTROLES TRAS CAMBIO DE JIG
 # ==============================================================================
 btn_ir_home = None
 btn_set_home = None
 btn_set_cero = None
 
-_hud_tutorial_frame = None
-_tutorial_widgets_resaltados = []
-_tutorial_anim_id = None
-_tutorial_anim_fase = 0
-_hud_pos_y = 0.88
-_paso_tutorial_actual = 1
-_tutorial_activo = False
+_widgets_resaltados = []
+_resaltado_anim_id = None
+_resaltado_anim_fase = 0
 
-_fn_mostrar_paso = None
-_fn_navegar_paso = None
-_fn_concluir_tutorial = None
-
-def _restaurar_widgets_tutorial():
-    """Restaura los estilos originales de todos los widgets iluminados durante el tutorial."""
-    global _tutorial_widgets_resaltados, _tutorial_anim_id
-    if _tutorial_anim_id:
+def _restaurar_widgets_resaltados():
+    """Restaura los estilos originales de los controles resaltados."""
+    global _widgets_resaltados, _resaltado_anim_id
+    if _resaltado_anim_id:
         try:
-            ventana.after_cancel(_tutorial_anim_id)
+            ventana.after_cancel(_resaltado_anim_id)
         except Exception:
             pass
-        _tutorial_anim_id = None
+        _resaltado_anim_id = None
     
-    for item in _tutorial_widgets_resaltados:
+    for item in _widgets_resaltados:
         try:
             w = item["widget"]
             cfgs = item["orig"]
             w.configure(**cfgs)
         except Exception:
             pass
-    _tutorial_widgets_resaltados = []
+    _widgets_resaltados = []
 
-def _animar_pulso_tutorial():
-    """Genera un efecto pulsante (brillo ámbar/azul vibrante) en los elementos activos del paso."""
-    global _tutorial_anim_id, _tutorial_anim_fase
-    if not _tutorial_widgets_resaltados:
+def _animar_pulso_resaltado():
+    """Genera un efecto pulsante suave en los controles resaltados."""
+    global _resaltado_anim_id, _resaltado_anim_fase
+    if not _widgets_resaltados:
         return
-    _tutorial_anim_fase = 1 - _tutorial_anim_fase
-    color_pulso = "#F59E0B" if _tutorial_anim_fase == 0 else "#0284C7"
-    bw = 4 if _tutorial_anim_fase == 0 else 5
-    for item in _tutorial_widgets_resaltados:
+    _resaltado_anim_fase = 1 - _resaltado_anim_fase
+    color_pulso = "#F59E0B" if _resaltado_anim_fase == 0 else "#0284C7"
+    bw = 3 if _resaltado_anim_fase == 0 else 4
+    for item in _widgets_resaltados:
         try:
             w = item["widget"]
-            if isinstance(w, ctk.CTkButton):
-                w.configure(border_color=color_pulso, border_width=bw)
-            elif isinstance(w, ctk.CTkFrame):
-                w.configure(border_color=color_pulso, border_width=bw)
-            elif isinstance(w, ctk.CTkOptionMenu):
-                w.configure(button_color=color_pulso)
-        except Exception:
-            pass
-    _tutorial_anim_id = ventana.after(380, _animar_pulso_tutorial)
-
-def _resaltar_elementos_interfaz(widgets):
-    """Guarda estilos previos y activa la iluminación con pulso en la lista de widgets."""
-    global _tutorial_widgets_resaltados
-    _restaurar_widgets_tutorial()
-    for w in widgets:
-        if w is None:
-            continue
-        try:
-            orig = {}
             if isinstance(w, (ctk.CTkButton, ctk.CTkFrame)):
-                for k in ["border_color", "border_width"]:
-                    try:
-                        orig[k] = w.cget(k)
-                    except Exception:
-                        pass
-                _tutorial_widgets_resaltados.append({"widget": w, "orig": orig})
-                w.configure(border_color="#F59E0B", border_width=4)
-            elif isinstance(w, ctk.CTkOptionMenu):
-                try:
-                    orig["button_color"] = w.cget("button_color")
-                except Exception:
-                    pass
-                _tutorial_widgets_resaltados.append({"widget": w, "orig": orig})
-                w.configure(button_color="#F59E0B")
+                w.configure(border_color=color_pulso, border_width=bw)
         except Exception:
             pass
-    _animar_pulso_tutorial()
-
-def notificar_accion_tutorial(paso_ejecutado, delay_ms=750):
-    """
-    Si el tutorial interactivo está activo y en el paso esperado,
-    muestra una confirmación visual y avanza automáticamente al siguiente paso.
-    """
-    global _tutorial_activo, _paso_tutorial_actual, _fn_navegar_paso, _fn_concluir_tutorial
-    if not _tutorial_activo or _hud_tutorial_frame is None:
-        return
-    try:
-        if not _hud_tutorial_frame.winfo_exists():
-            return
-    except Exception:
-        return
-
-    if _paso_tutorial_actual == paso_ejecutado:
-        lbl_estado.configure(
-            text=f"✓ Acción del Paso {paso_ejecutado} detectada correctamente. Avanzando automáticamente...",
-            text_color=COLOR_OK
-        )
-        if 'lbl_hud_feedback' in globals() and lbl_hud_feedback.winfo_exists():
-            lbl_hud_feedback.configure(
-                text="✓ ¡Acción Realizada! Avanzando...",
-                fg_color="#10B981",
-                text_color="#FFFFFF"
-            )
-
-        def _avanzar_automatico():
-            if not _tutorial_activo or _paso_tutorial_actual != paso_ejecutado:
-                return
-            if 'lbl_hud_feedback' in globals() and lbl_hud_feedback.winfo_exists():
-                lbl_hud_feedback.configure(
-                    text="⚡ Avance Automático Activo",
-                    fg_color="#065F46",
-                    text_color="#A7F3D0"
-                )
-            if _paso_tutorial_actual < 5:
-                if _fn_navegar_paso:
-                    _fn_navegar_paso(1)
-            else:
-                if _fn_concluir_tutorial:
-                    _fn_concluir_tutorial()
-
-        ventana.after(delay_ms, _avanzar_automatico)
+    _resaltado_anim_id = ventana.after(300, _animar_pulso_resaltado)
 
 def resaltar_temporalmente_set0_y_home(segundos=6):
     """Ilumina de forma temporal 'Set 0' y 'Ir a home' tras un cambio de Jig."""
+    global _widgets_resaltados
     if 'abrir_desplegable_calibracion' in globals():
         try:
             abrir_desplegable_calibracion()
         except Exception:
             pass
-    widgets = [globals().get("btn_set_cero"), globals().get("btn_ir_home")]
-    _resaltar_elementos_interfaz([w for w in widgets if w is not None])
+    _restaurar_widgets_resaltados()
+    for w in [globals().get("btn_set_cero"), globals().get("btn_ir_home")]:
+        if w is None:
+            continue
+        try:
+            orig = {}
+            for k in ["border_color", "border_width"]:
+                try:
+                    orig[k] = w.cget(k)
+                except Exception:
+                    pass
+            _widgets_resaltados.append({"widget": w, "orig": orig})
+            w.configure(border_color="#F59E0B", border_width=3)
+        except Exception:
+            pass
+    _animar_pulso_resaltado()
     lbl_estado.configure(
         text="🔧 Cambio de Jig: Por favor fije 'Set 0' y presione 'Ir a home' (botones resaltados en pantalla).",
         text_color=COLOR_KOSTAL_ACCENT
     )
-    ventana.after(segundos * 1000, _restaurar_widgets_tutorial)
-
-def obtener_info_paso_tutorial(num_paso):
-    """Retorna la información y widgets para cada uno de los pasos del tutorial."""
-    global estado_manual, idioma_actual
-    es = (idioma_actual == "ES")
-    if num_paso == 1:
-        return {
-            "num": 1,
-            "badge": "PASO 1 DE 5: SELECCIÓN DE RECETA Y JIG" if es else "STEP 1 OF 5: RECIPE & JIG SELECTION",
-            "titulo": "Seleccionar el Jig y Cargar la Receta" if es else "Select Jig and Load Recipe",
-            "icono": "📋",
-            "descripcion": "El selector de recetas y la vista previa están ILUMINADOS a la izquierda.\n👉 Elige una receta en el menú para cargar su matriz. Al seleccionarla, avanzarás automáticamente al Paso 2." if es else "The recipe dropdown and preview are HIGHLIGHTED on the left.\n👉 Select a recipe from the menu to load its matrix.",
-            "nota": "💡 Tip: En producción normal, al cambiar de Jig solo se requerirá 'Set 0' e 'Ir a home'." if es else "💡 Tip: In normal production, changing Jig only requires 'Set 0' and 'Home'.",
-            "widgets": [globals().get("option_receta"), globals().get("f_pieza_preview")]
-        }
-    elif num_paso == 2:
-        if not estado_manual:
-            return {
-                "num": 2,
-                "badge": "PASO 2 DE 5: ACTIVAR MODO MANUAL Y FIJAR SET 0" if es else "STEP 2 OF 5: ENABLE MANUAL MODE & SET 0",
-                "titulo": "Paso Previo: Cambiar la Estación a MODO MANUAL" if es else "Pre-requisite: Switch Station to MANUAL MODE",
-                "icono": "⚙",
-                "descripcion": "⚠️ La estación está en MODO AUTO. Antes de mover la cruceta o fijar el cero, debes cambiar a MODO MANUAL.\n👉 Presiona el botón ILUMINADO '⚙ MODO: AUTO' para activar el control manual del cabezal." if es else "⚠️ Station is in AUTO MODE. Before moving Jog or setting zero, switch to MANUAL.\n👉 Tap HIGHLIGHTED '⚙ MODE: AUTO' to switch to manual control.",
-                "nota": "💡 Recuerda: La cruceta JOG y el desplazamiento de ejes solo responden cuando el modo MANUAL está activo." if es else "💡 Reminder: JOG pad and axis motions only respond in MANUAL mode.",
-                "widgets": [globals().get("btn_manual")]
-            }
-        else:
-            if 'abrir_desplegable_calibracion' in globals():
-                try:
-                    abrir_desplegable_calibracion()
-                except Exception:
-                    pass
-            return {
-                "num": 2,
-                "badge": "PASO 2 DE 5: CALIBRACIÓN DEL PUNTO CERO" if es else "STEP 2 OF 5: ZERO POINT CALIBRATION",
-                "titulo": "Centrar Cabezal y Guardar Punto Cero (Set 0)" if es else "Center Head & Save Zero Point (Set 0)",
-                "icono": "↩",
-                "descripcion": "✓ ¡MODO MANUAL ACTIVO! Usa las flechas de la cruceta JOG para centrar el cabezal sobre la Pieza 01.\n👉 Presiona el botón ILUMINADO '↩ Set 0' para registrar el origen de pintado. El sistema avanzará automáticamente." if es else "✓ MANUAL MODE ACTIVE! Use JOG arrows to center head over Part 01.\n👉 Tap HIGHLIGHTED '↩ Set 0' to register print origin.",
-                "nota": "💡 Tip: Este punto cero se mantendrá guardado entre ciclos para toda esta receta." if es else "💡 Tip: This zero point remains saved across cycles for this recipe.",
-                "widgets": [globals().get("btn_set_cero"), globals().get("btn_y_mas"), globals().get("btn_y_menos"), globals().get("btn_x_mas"), globals().get("btn_x_menos")]
-            }
-    elif num_paso == 3:
-        return {
-            "num": 3,
-            "badge": "PASO 3 DE 5: REFERENCIA DE SEGURIDAD" if es else "STEP 3 OF 5: SAFETY REFERENCE",
-            "titulo": "Referenciar la Máquina (Ir a Home)" if es else "Reference Machine (Go to Home)",
-            "icono": "🏠",
-            "descripcion": "El botón '🏠 Home' está ILUMINADO en los controles de referencia a la derecha.\n👉 Presiona este botón para enviar el cabezal al origen seguro de reposo. El sistema avanzará automáticamente al Paso 4." if es else "The '🏠 Home' button is HIGHLIGHTED in reference controls.\n👉 Tap this button to send the head to safe rest position.",
-            "nota": "💡 Tip: Ambos orígenes (Set 0 y Home) protegen el herramental contra colisiones antes de pintar." if es else "💡 Tip: Both origins (Set 0 & Home) protect tooling against collisions.",
-            "widgets": [globals().get("btn_ir_home")]
-        }
-    elif num_paso == 4:
-        return {
-            "num": 4,
-            "badge": "PASO 4 DE 5: CICLO AUTOMÁTICO Y GATILLO" if es else "STEP 4 OF 5: AUTOMATIC CYCLE & TRIGGER",
-            "titulo": "Iniciar Pintado y Disparo por Sensor Y" if es else "Start Printing & Sensor Y Trigger",
-            "icono": "🎨",
-            "descripcion": "El botón '🎨 INICIO DE PINTADO' está ILUMINADO a la izquierda.\n👉 Presiona el botón para armar el ciclo automático de pintado." if es else "The '🎨 START PRINTING' button is HIGHLIGHTED on the left.\n👉 Tap the button to arm the automatic printing cycle.",
-            "nota": "💡 Tip: En producción el tampógrafo avanzará las piezas al recibir el pulso del sensor." if es else "💡 Tip: In production the pad printer advances parts upon sensor pulse.",
-            "widgets": [globals().get("btn_pintar")]
-        }
-    elif num_paso == 5:
-        return {
-            "num": 5,
-            "badge": "PASO 5 DE 5: FIN DE CICLO, RESET Y PARO" if es else "STEP 5 OF 5: CYCLE END, RESET & E-STOP",
-            "titulo": "Fin de Ciclo Automático, Reset y Emergencias" if es else "Auto Cycle End, Reset & Emergency Controls",
-            "icono": "🏁",
-            "descripcion": "Los botones 'RESET' y 'PARO' están ILUMINADOS a la derecha.\n👉 Al terminar la matriz se reinicia automáticamente sin perder el Set 0. Presiona '↻ RESET' o '✅ Finalizar Inducción'." if es else "The 'RESET' and 'E-STOP' buttons are HIGHLIGHTED.\n👉 Tap '↻ RESET' or '✅ Finish Induction'.",
-            "nota": "💡 ¡Excelente! Has completado el recorrido guiado por toda la interfaz." if es else "💡 Excellent! You have completed the guided interface walkthrough.",
-            "widgets": [globals().get("btn_reset"), globals().get("btn_stop")]
-        }
-    return {}
-    return {}
-
-def iniciar_tutorial_interactivo(obligatorio=False, usuario_obj=None):
-    """
-    Guía interactiva paso a paso en la propia interfaz con iluminación de controles en vivo.
-    - Tipografía grande y de alta legibilidad.
-    - Avance automático al realizar en vivo la acción de cada paso.
-    - Guía de cambio de MODO AUTO a MODO MANUAL previa a la calibración de Set 0.
-    """
-    global _hud_tutorial_frame, _paso_tutorial_actual, _hud_pos_y, _tutorial_activo
-    global _fn_mostrar_paso, _fn_navegar_paso, _fn_concluir_tutorial
-
-    try:
-        # Asegurar pantalla del operador visible
-        if 'frame_admin' in globals() and frame_admin.winfo_viewable():
-            volver_a_panel_operador()
-        elif 'frame_login' in globals() and frame_login.winfo_viewable():
-            frame_login.pack_forget()
-            frame_operador.pack(fill="both", expand=True)
-
-        if _hud_tutorial_frame is not None and _hud_tutorial_frame.winfo_exists():
-            try:
-                _hud_tutorial_frame.destroy()
-            except Exception:
-                pass
-            _restaurar_widgets_tutorial()
-
-        _tutorial_activo = True
-        _paso_tutorial_actual = 1
-        _hud_pos_y = 0.88
-
-        # Marco HUD con altura mayor (170 px) para acomodar texto grande y muy legible
-        hud = ctk.CTkFrame(
-            frame_operador,
-            height=170,
-            fg_color="#0F172A",
-            corner_radius=12,
-            border_width=3,
-            border_color="#F59E0B"
-        )
-        _hud_tutorial_frame = hud
-        hud.place(relx=0.5, rely=_hud_pos_y, anchor="center", relwidth=0.92)
-        hud.lift()
-
-        # Fila Superior: Badge + Título + Feedback Automático + Mover HUD + Salir/Obligatorio
-        f_hud_top = ctk.CTkFrame(hud, fg_color="transparent")
-        f_hud_top.pack(fill="x", padx=16, pady=(10, 4))
-
-        lbl_hud_badge = ctk.CTkLabel(
-            f_hud_top,
-            text="",
-            font=(FONT_MAIN, 11, "bold"),
-            fg_color="#F59E0B",
-            text_color="#0F172A",
-            corner_radius=5,
-            padx=10,
-            pady=3
-        )
-        lbl_hud_badge.pack(side="left", padx=(0, 10))
-
-        lbl_hud_title = ctk.CTkLabel(
-            f_hud_top,
-            text="",
-            font=(FONT_MAIN, 15, "bold"),
-            text_color="#FFFFFF"
-        )
-        lbl_hud_title.pack(side="left")
-
-        global lbl_hud_feedback
-        lbl_hud_feedback = ctk.CTkLabel(
-            f_hud_top,
-            text="⚡ Avance Automático Activo",
-            font=(FONT_MAIN, 10, "bold"),
-            fg_color="#065F46",
-            text_color="#A7F3D0",
-            corner_radius=5,
-            padx=10,
-            pady=3
-        )
-        lbl_hud_feedback.pack(side="left", padx=(14, 0))
-
-        def toggle_pos():
-            global _hud_pos_y
-            _hud_pos_y = 0.17 if _hud_pos_y >= 0.5 else 0.88
-            hud.place_configure(rely=_hud_pos_y)
-            btn_hud_move.configure(text="⬇ Mover Abajo" if _hud_pos_y < 0.5 else "⬆ Mover Arriba")
-
-        btn_hud_move = ctk.CTkButton(
-            f_hud_top,
-            text="⬆ Mover Arriba",
-            font=(FONT_MAIN, 10, "bold"),
-            width=110,
-            height=28,
-            fg_color="#334155",
-            hover_color="#475569",
-            text_color="#E2E8F0",
-            corner_radius=5,
-            command=toggle_pos
-        )
-        btn_hud_move.pack(side="right", padx=(6, 0))
-
-        if obligatorio:
-            lbl_hud_oblg = ctk.CTkLabel(
-                f_hud_top,
-                text="🔒 INDUCCIÓN OBLIGATORIA",
-                font=(FONT_MAIN, 10, "bold"),
-                fg_color="#DC2626",
-                text_color="#FFFFFF",
-                corner_radius=5,
-                padx=10,
-                pady=3
-            )
-            lbl_hud_oblg.pack(side="right", padx=(4, 6))
-        else:
-            btn_hud_close = ctk.CTkButton(
-                f_hud_top,
-                text="✕ Salir Guía",
-                font=(FONT_MAIN, 10, "bold"),
-                width=95,
-                height=28,
-                fg_color="#1E293B",
-                hover_color="#EF4444",
-                text_color="#94A3B8",
-                corner_radius=5,
-                command=lambda: cerrar_guia_voluntaria()
-            )
-            btn_hud_close.pack(side="right", padx=(4, 6))
-
-        # Fila Central: Ícono grande + Descripción en letra grande y legible + Nota Tip
-        f_hud_mid = ctk.CTkFrame(hud, fg_color="transparent")
-        f_hud_mid.pack(fill="both", expand=True, padx=16, pady=4)
-
-        lbl_hud_ico = ctk.CTkLabel(f_hud_mid, text="", font=(FONT_MAIN, 32))
-        lbl_hud_ico.pack(side="left", padx=(4, 14))
-
-        f_hud_txt = ctk.CTkFrame(f_hud_mid, fg_color="transparent")
-        f_hud_txt.pack(side="left", fill="both", expand=True)
-
-        lbl_hud_desc = ctk.CTkLabel(
-            f_hud_txt,
-            text="",
-            font=(FONT_MAIN, 13, "bold"),
-            text_color="#FFFFFF",
-            justify="left",
-            anchor="w",
-            wraplength=950
-        )
-        lbl_hud_desc.pack(fill="x", anchor="w")
-
-        lbl_hud_tip = ctk.CTkLabel(
-            f_hud_txt,
-            text="",
-            font=(FONT_MAIN, 11, "bold"),
-            text_color="#FDE047",
-            justify="left",
-            anchor="w",
-            wraplength=950
-        )
-        lbl_hud_tip.pack(fill="x", anchor="w", pady=(4, 0))
-
-        # Fila Inferior: Indicador de pasos + Botones Anterior / Siguiente
-        f_hud_bot = ctk.CTkFrame(hud, fg_color="transparent")
-        f_hud_bot.pack(fill="x", padx=16, pady=(4, 10))
-
-        lbl_hud_dots = ctk.CTkLabel(
-            f_hud_bot,
-            text="",
-            font=(FONT_MAIN, 11, "bold"),
-            text_color="#94A3B8"
-        )
-        lbl_hud_dots.pack(side="left", padx=4)
-
-        btn_hud_ant = ctk.CTkButton(
-            f_hud_bot,
-            text="◀ Anterior",
-            font=(FONT_MAIN, 11, "bold"),
-            width=100,
-            height=32,
-            fg_color="#334155",
-            hover_color="#475569",
-            text_color="#FFFFFF",
-            corner_radius=6,
-            command=lambda: navegar_paso(-1)
-        )
-        btn_hud_ant.pack(side="right", padx=6)
-
-        btn_hud_sig = ctk.CTkButton(
-            f_hud_bot,
-            text="Siguiente ▶",
-            font=(FONT_MAIN, 11, "bold"),
-            width=130,
-            height=32,
-            fg_color=COLOR_KOSTAL_ACCENT,
-            hover_color=COLOR_KOSTAL_LIGHT,
-            text_color="#FFFFFF",
-            corner_radius=6,
-            command=lambda: avanzar_o_terminar()
-        )
-        btn_hud_sig.pack(side="right", padx=6)
-
-        def mostrar_paso_actual():
-            p_info = obtener_info_paso_tutorial(_paso_tutorial_actual)
-
-            lbl_hud_badge.configure(text=p_info["badge"])
-            lbl_hud_title.configure(text=p_info["titulo"])
-            lbl_hud_ico.configure(text=p_info["icono"])
-            lbl_hud_desc.configure(text=p_info["descripcion"])
-            lbl_hud_tip.configure(text=p_info["nota"])
-
-            dots_str = "     ".join([
-                f"● {i}. {nom}" if i == _paso_tutorial_actual else f"○ {i}. {nom}"
-                for i, nom in enumerate(["Receta", "Modo/Set 0", "Home", "Pintado", "Fin/Reset"], 1)
-            ])
-            lbl_hud_dots.configure(text=dots_str)
-
-            btn_hud_ant.configure(state="normal" if _paso_tutorial_actual > 1 else "disabled")
-            if _paso_tutorial_actual == 5:
-                btn_hud_sig.configure(
-                    text="✅ Finalizar Inducción",
-                    fg_color=COLOR_OK,
-                    hover_color=COLOR_OK_HOVER,
-                    width=160
-                )
-            else:
-                btn_hud_sig.configure(
-                    text="Siguiente ▶",
-                    fg_color=COLOR_KOSTAL_ACCENT,
-                    hover_color=COLOR_KOSTAL_LIGHT,
-                    width=130
-                )
-
-            widgets_a_iluminar = [w for w in p_info.get("widgets", []) if w is not None]
-            _resaltar_elementos_interfaz(widgets_a_iluminar)
-            lbl_estado.configure(
-                text=f"🎓 Tutorial Interactivo: {_paso_tutorial_actual}/5 - {p_info['titulo']} (Realiza la acción para avanzar automáticamente)",
-                text_color="#F59E0B"
-            )
-
-        def avanzar_o_terminar():
-            global _paso_tutorial_actual
-            if _paso_tutorial_actual < 5:
-                _paso_tutorial_actual += 1
-                mostrar_paso_actual()
-            else:
-                concluir_tutorial()
-
-        def navegar_paso(delta):
-            global _paso_tutorial_actual
-            nuevo = _paso_tutorial_actual + delta
-            if 1 <= nuevo <= 5:
-                _paso_tutorial_actual = nuevo
-                mostrar_paso_actual()
-
-        def cerrar_guia_voluntaria():
-            global _tutorial_activo
-            if obligatorio:
-                messagebox.showwarning(
-                    "Inducción Obligatoria",
-                    "Como nuevo usuario en el sistema, debes recorrer los 5 pasos del tutorial para finalizar tu inducción."
-                )
-                return
-            _tutorial_activo = False
-            _restaurar_widgets_tutorial()
-            if hud.winfo_exists():
-                hud.destroy()
-            lbl_estado.configure(text="Tutorial interactivo cerrado.", text_color=TEXT_MUTED)
-
-        def concluir_tutorial():
-            global _tutorial_activo
-            _tutorial_activo = False
-            _restaurar_widgets_tutorial()
-            if hud.winfo_exists():
-                hud.destroy()
-
-            if usuario_obj:
-                usuario_obj["tutorial_completado"] = True
-                for u in USUARIOS_SISTEMA:
-                    if u.get("nombre") == usuario_obj.get("nombre"):
-                        u["tutorial_completado"] = True
-                        break
-                config_actual["usuarios"] = list(USUARIOS_SISTEMA)
-                guardar_configuracion()
-                lbl_estado.configure(
-                    text=f"✓ Inducción completada con éxito por {usuario_obj.get('nombre')}. Operación 100% autorizada.",
-                    text_color=COLOR_OK
-                )
-                messagebox.showinfo(
-                    "¡Inducción Completada!",
-                    f"¡Felicidades {usuario_obj.get('nombre')}!\n\n"
-                    "Has completado satisfactoriamente el recorrido interactivo en la HMI KOSTAL:\n"
-                    "• 1. Selección de Receta y Jig\n"
-                    "• 2. Modo Manual y Calibración de Set 0 con Cruceta JOG\n"
-                    "• 3. Referenciado seguro a Home\n"
-                    "• 4. Ciclo automático y disparo por Gatillo\n"
-                    "• 5. Fin de Ciclo, Reset y Paro de Emergencia\n\n"
-                    "La estación se encuentra autorizada para operar."
-                )
-            else:
-                lbl_estado.configure(text="✓ Tutorial interactivo finalizado con éxito.", text_color=COLOR_OK)
-
-        _fn_mostrar_paso = mostrar_paso_actual
-        _fn_navegar_paso = navegar_paso
-        _fn_concluir_tutorial = concluir_tutorial
-
-        mostrar_paso_actual()
-    except Exception as e:
-        print(f"Error iniciando tutorial interactivo: {e}")
-
-abrir_tutorial_proceso = iniciar_tutorial_interactivo
+    ventana.after(segundos * 1000, _restaurar_widgets_resaltados)
 
 def cargar_receta_por_nombre(nombre_receta, mostrar_modal_aviso=True):
     """
@@ -1782,8 +1366,7 @@ def cargar_receta_por_nombre(nombre_receta, mostrar_modal_aviso=True):
                     text=f"⚠️ Cambio a Jig '{nombre_receta}'. Debe calibrar 'Set 0' con la Cruceta JOG antes de iniciar el pintado.",
                     text_color=COLOR_WARN
                 )
-                # Durante el Paso 1 del tutorial guiado o si viene de confirmación explícita, no desplegar modal intrusivo
-                if mostrar_modal_aviso and not ('_tutorial_activo' in globals() and _tutorial_activo and _paso_tutorial_actual == 1):
+                if mostrar_modal_aviso:
                     ventana.after(300, lambda nr=nombre_receta: mostrar_alerta_cambio_jig(nr))
         else:
             if ya_calibrada:
@@ -1796,10 +1379,6 @@ def cargar_receta_por_nombre(nombre_receta, mostrar_modal_aviso=True):
                     text=f"⚠️ Receta '{nombre_receta}' cargada | Matriz: {matriz_filas}×{matriz_cols} | Set 0 PENDIENTE de calibrar.",
                     text_color=COLOR_WARN
                 )
-
-    # Si el tutorial guiado está activo en el Paso 1, avanzar automáticamente al Paso 2
-    if '_tutorial_activo' in globals() and _tutorial_activo and _paso_tutorial_actual == 1:
-        notificar_accion_tutorial(1, delay_ms=750)
 
 def resetear_variables_inicio(forzar_reseteo_referencias=False):
     """
@@ -2162,7 +1741,6 @@ DICCIONARIO_IDIOMAS = {
         "reset": "↻  RESET",
         "paro": "🛑  PARO",
         "cerrar_sesion": "⏻ Cerrar Sesión",
-        "tutorial": "📖 Tutorial",
         "pantalla": "⛶ Pantalla",
         "minimizar": "🗕 Minimizar",
         "usuario": "Usuario / Perfil",
@@ -2214,7 +1792,6 @@ DICCIONARIO_IDIOMAS = {
         "reset": "↻  RESET",
         "paro": "🛑  E-STOP",
         "cerrar_sesion": "⏻ Log Out",
-        "tutorial": "📖 Tutorial",
         "pantalla": "⛶ Fullscreen",
         "minimizar": "🗕 Minimize",
         "usuario": "User / Profile",
@@ -2295,8 +1872,6 @@ def cambiar_idioma(nuevo_idioma):
         btn_activar_tampo.configure(text=dic["activar_tampo"])
     if 'btn_logout_top' in globals():
         btn_logout_top.configure(text=dic["cerrar_sesion"])
-    if 'btn_tutorial' in globals():
-        btn_tutorial.configure(text=dic["tutorial"])
 
     # Botones de ventana
     for b in ['btn_login_fs', 'btn_sb_fs', 'btn_fs_top']:
@@ -2348,8 +1923,6 @@ def ejecutar_home_general():
                     maquina_en_home = True
             ventana.after(60, _reintentar_home)
             lbl_estado.configure(text="⚠️ Sincronizando coordenadas HOME con PLC antes de mover...", text_color=COLOR_WARN)
-        if '_tutorial_activo' in globals() and _tutorial_activo and _paso_tutorial_actual == 3:
-            notificar_accion_tutorial(3, delay_ms=800)
     except Exception as e:
         lbl_estado.configure(text=f"✗ Error al ir a Home: {e}", text_color=COLOR_NOK)
 
@@ -2490,8 +2063,6 @@ def ejecutar_reset_general():
             pass
             
         lbl_estado.configure(text="✓ Pulso RESET enviado al PLC. Ciclo, alarmas y matriz reiniciados.", text_color=COLOR_OK)
-        if '_tutorial_activo' in globals() and _tutorial_activo and _paso_tutorial_actual == 5:
-            notificar_accion_tutorial(5, delay_ms=900)
     except Exception as e:
         lbl_estado.configure(text=f"✗ Error al ejecutar RESET: {e}", text_color=COLOR_NOK)
 
@@ -2559,8 +2130,6 @@ def guardar_posicion_como_cero():
         if 'lbl_cero_jog_val' in globals() and lbl_cero_jog_val:
             lbl_cero_jog_val.configure(text=f"X: {cero_guardado_x:.2f} mm  |  Y: {cero_guardado_y:.2f} mm")
         lbl_estado.configure(text=f"✓ Set 0 calibrado y fijado como predeterminado para '{rec_activa_nom}' en X:{cero_guardado_x:.2f} Y:{cero_guardado_y:.2f} mm. Listo para pintar.", text_color=COLOR_OK)
-        if '_tutorial_activo' in globals() and _tutorial_activo and _paso_tutorial_actual == 2:
-            notificar_accion_tutorial(2, delay_ms=800)
     except ValueError:
         lbl_estado.configure(text="✗ Error numérico al guardar Set 0.", text_color=COLOR_NOK)
 
@@ -3194,8 +2763,6 @@ def alternar_pintar():
                 text=f"🎨 INICIO DE PINTADO ACTIVADO: Posicionado en SET 0 (X:{cero_guardado_x:.2f} Y:{cero_guardado_y:.2f} mm) | Pieza 1/{matriz_total} (Pasada 1/{num_p}). Esperando señal PINTADO del PLC...",
                 text_color=COLOR_OK
             )
-            if '_tutorial_activo' in globals() and _tutorial_activo and _paso_tutorial_actual == 4:
-                notificar_accion_tutorial(4, delay_ms=850)
         else:
             estado_pintar = False
             btn_pintar.configure(text="🎨\nINICIO DE\nPINTADO\n[OFF]", fg_color=COLOR_KOSTAL_NAVY, text_color="white", border_color="#94A3B8")
@@ -3228,11 +2795,6 @@ def alternar_manual():
         else:
             btn_manual.configure(text="⚙ MODO: AUTO", fg_color=COLOR_KOSTAL_NAVY, text_color="white")
             lbl_estado.configure(text="Modo Auto activado. Cruzeta deshabilitada.", text_color=COLOR_KOSTAL_NAVY)
-
-        # Si el tutorial interactivo está en el Paso 2, refrescar la guía e iluminar cruceta y Set 0
-        if '_tutorial_activo' in globals() and _tutorial_activo and _paso_tutorial_actual == 2:
-            if '_fn_mostrar_paso' in globals() and _fn_mostrar_paso:
-                _fn_mostrar_paso()
     except Exception as e:
         lbl_estado.configure(text=f"✗ Error en modo: {e}", text_color=COLOR_NOK)
 
@@ -3464,22 +3026,26 @@ def actualizar_telemetria_plc(dest_x=None, dest_y=None):
             alarm_y = bool(_cache_telemetria_plc.get("ALARM_Y", False))
             
             if 'lbl_tel_destino' in globals():
-                lbl_tel_destino.configure(
+                _cfg_si_cambio(
+                    lbl_tel_destino,
                     text=f"🎯 DESTINO P{num_pz:02d}: X={dest_x:.2f} mm | Y={dest_y:.2f} mm"
                 )
             if 'lbl_tel_plc_rx' in globals():
-                lbl_tel_plc_rx.configure(
+                _cfg_si_cambio(
+                    lbl_tel_plc_rx,
                     text=f"📡 PLC RECIBIÓ: POS_X={plc_x:.2f} mm | POS_Y={plc_y:.2f} mm"
                 )
             if 'lbl_tel_status' in globals():
                 if coincide:
-                    lbl_tel_status.configure(
+                    _cfg_si_cambio(
+                        lbl_tel_status,
                         text="🟢 PLC RECIBIÓ COORDENADAS (COINCIDE ✓)",
                         fg_color=COLOR_OK_SOFT,
                         text_color=COLOR_OK_TEXT
                     )
                 else:
-                    lbl_tel_status.configure(
+                    _cfg_si_cambio(
+                        lbl_tel_status,
                         text=f"⚠️ DISCREPANCIA (ΔX={diff_x:.1f}, ΔY={diff_y:.1f} mm)",
                         fg_color=COLOR_WARN_SOFT,
                         text_color=COLOR_WARN_TEXT
@@ -3509,27 +3075,31 @@ def actualizar_telemetria_plc(dest_x=None, dest_y=None):
                 else:
                     txt_itlk = "✓ Interlocks OK: Energizado, Listo, Modo Cruzeta Habilitado"
                     c_itlk = "#059669"
-                lbl_tel_interlock.configure(text=txt_itlk, text_color=c_itlk)
+                _cfg_si_cambio(lbl_tel_interlock, text=txt_itlk, text_color=c_itlk)
         else:
             ultimo_plc_rx_x = dest_x
             ultimo_plc_rx_y = dest_y
             ultimo_plc_rx_ok = True
             if 'lbl_tel_destino' in globals():
-                lbl_tel_destino.configure(
+                _cfg_si_cambio(
+                    lbl_tel_destino,
                     text=f"🎯 DESTINO P{num_pz:02d}: X={dest_x:.2f} mm | Y={dest_y:.2f} mm"
                 )
             if 'lbl_tel_plc_rx' in globals():
-                lbl_tel_plc_rx.configure(
+                _cfg_si_cambio(
+                    lbl_tel_plc_rx,
                     text=f"📡 SIMULADO: X={dest_x:.2f} mm | Y={dest_y:.2f} mm"
                 )
             if 'lbl_tel_status' in globals():
-                lbl_tel_status.configure(
+                _cfg_si_cambio(
+                    lbl_tel_status,
                     text="🔵 MODO SIMULACIÓN (Sin PLC físico)",
                     fg_color="#EFF6FF",
                     text_color="#1E40AF"
                 )
             if 'lbl_tel_interlock' in globals():
-                lbl_tel_interlock.configure(
+                _cfg_si_cambio(
+                    lbl_tel_interlock,
                     text="Interlocks: Modo Simulación Activo",
                     text_color=TEXT_MUTED
                 )
@@ -3761,6 +3331,32 @@ def cerrar_aplicacion():
     import os
     os._exit(0)
 
+_modo_fullscreen_usuario = True
+
+def aplicar_pantalla_completa_windows():
+    """Fuerza pantalla completa abarcando el 100% real del monitor en Windows (1920x1080)"""
+    if MODO_SIM_WINDOWS or not _modo_fullscreen_usuario:
+        return
+    try:
+        ventana.update_idletasks()
+        sw = ventana.winfo_screenwidth()
+        sh = ventana.winfo_screenheight()
+        tk.Tk.geometry(ventana, f"{sw}x{sh}+0+0")
+    except Exception:
+        pass
+    try:
+        ventana.attributes("-fullscreen", True)
+    except Exception:
+        try:
+            ventana.state("zoomed")
+        except Exception:
+            pass
+    try:
+        ventana.lift()
+        ventana.focus_force()
+    except Exception:
+        pass
+
 def minimizar_ventana():
     """Minimiza la ventana asegurando compatibilidad con pantalla completa en Windows"""
     try:
@@ -3771,10 +3367,20 @@ def minimizar_ventana():
         print(f"Error al minimizar: {e}")
 
 def alternar_pantalla_completa():
-    """Alterna entre pantalla completa y modo ventana normal"""
+    """Alterna entre pantalla completa sin bordes y ventana maximizada en Windows"""
+    global _modo_fullscreen_usuario
     try:
         actual = bool(ventana.attributes("-fullscreen"))
-        ventana.attributes("-fullscreen", not actual)
+        nuevo = not actual
+        _modo_fullscreen_usuario = nuevo
+        if nuevo:
+            sw = ventana.winfo_screenwidth()
+            sh = ventana.winfo_screenheight()
+            tk.Tk.geometry(ventana, f"{sw}x{sh}+0+0")
+            ventana.attributes("-fullscreen", True)
+        else:
+            ventana.attributes("-fullscreen", False)
+            ventana.state("zoomed")
     except Exception as e:
         print(f"Error alternando pantalla completa: {e}")
 
@@ -4209,14 +3815,16 @@ def volver_a_panel_operador():
 
 def actualizar_reloj_y_fecha():
     ahora = datetime.datetime.now()
+    t_str = ahora.strftime("%H:%M:%S")
+    d_str = ahora.strftime("%d/%m/%Y")
     if 'lbl_hdr_time' in globals():
-        lbl_hdr_time.configure(text=ahora.strftime("%H:%M:%S"))
+        _cfg_si_cambio(lbl_hdr_time, text=t_str)
     if 'lbl_hdr_date' in globals():
-        lbl_hdr_date.configure(text=ahora.strftime("%d/%m/%Y"))
+        _cfg_si_cambio(lbl_hdr_date, text=d_str)
     if 'lbl_adm_time' in globals():
-        lbl_adm_time.configure(text=ahora.strftime("%H:%M:%S"))
+        _cfg_si_cambio(lbl_adm_time, text=t_str)
     if 'lbl_adm_date' in globals():
-        lbl_adm_date.configure(text=ahora.strftime("%d/%m/%Y"))
+        _cfg_si_cambio(lbl_adm_date, text=d_str)
     ventana.after(1000, actualizar_reloj_y_fecha)
 
 def actualizar_temporizador_sesion():
@@ -4233,27 +3841,38 @@ def actualizar_temporizador_sesion():
 # 5. VENTANA PRINCIPAL (CUSTOMTKINTER)
 # ==============================================================================
 ventana = ctk.CTk()
+try:
+    _sw_real = ventana.winfo_screenwidth()
+    _sh_real = ventana.winfo_screenheight()
+    # Si el monitor tiene resolución menor a 1920x1080, ajustar escala proporcionalmente
+    if _sw_real < 1900:
+        _escala_mon = max(0.75, min(1.0, round(_sw_real / 1920.0, 2)))
+        ctk.set_widget_scaling(_escala_mon)
+        ctk.set_window_scaling(1.0)
+    else:
+        ctk.set_widget_scaling(1.0)
+        ctk.set_window_scaling(1.0)
+except Exception:
+    _sw_real, _sh_real = 1920, 1080
+
 if MODO_SIM_WINDOWS:
     ventana.title("KOSTAL Industrial HMI — Modo Simulación Windows (Pruebas)")
-    ventana.geometry("1400x860+60+20")
+    tk.Tk.geometry(ventana, "1400x860+60+20")
     ventana.minsize(1180, 700)
 else:
     ventana.title("KOSTAL Industrial HMI - Estación de Inserción y Pintado SMC")
-    ventana.geometry("1920x1080")
-    ventana.minsize(1280, 720)
+    tk.Tk.geometry(ventana, f"{_sw_real}x{_sh_real}+0+0")
+    ventana.minsize(1024, 600)
 
 ventana.configure(fg_color=BG_MAIN)
 ventana.protocol("WM_DELETE_WINDOW", cerrar_aplicacion)
 
 if not MODO_SIM_WINDOWS:
-    # Modo Pantalla Completa nativa en Windows (Resolución objetivo 1920x1080)
-    try:
-        ventana.attributes("-fullscreen", True)
-    except Exception:
-        try:
-            ventana.state("zoomed")
-        except Exception:
-            pass
+    # Modo Pantalla Completa nativa en Windows: aplicar al inicio y re-aplicar tras el deiconify interno de CustomTkinter
+    aplicar_pantalla_completa_windows()
+    ventana.after(80, aplicar_pantalla_completa_windows)
+    ventana.after(250, aplicar_pantalla_completa_windows)
+    ventana.after(600, aplicar_pantalla_completa_windows)
 
 # Traer la interfaz al frente de la terminal y asegurar foco sin atrapar capas
 ventana.lift()
@@ -4261,7 +3880,7 @@ ventana.focus_force()
 
 # Atajos para alternar pantalla completa o salir con teclado
 ventana.bind("<F11>", lambda e: alternar_pantalla_completa())
-ventana.bind("<Escape>", lambda e: ventana.attributes("-fullscreen", False))
+ventana.bind("<Escape>", lambda e: alternar_pantalla_completa() if ventana.attributes("-fullscreen") else None)
 
 # Detección táctil inteligente: verificar si un widget o sus contenedores pertenecen a un campo de texto
 def _es_widget_de_texto(w):
@@ -4319,10 +3938,6 @@ img_logo_baluarte_panel = cargar_imagen("LOGO_BALUARTE.png", 270, 68)
 # 5.0. PANTALLA DE CARGA INDUSTRIAL (SPLASH SCREEN KOSTAL & BALUARTE)
 # ------------------------------------------------------------------------------
 frame_splash = ctk.CTkFrame(ventana, fg_color=BG_MAIN, corner_radius=0)
-try:
-    frame_splash.configure(cursor="none")
-except Exception:
-    pass
 frame_splash.pack(fill="both", expand=True)
 
 # Barra superior con botones de ventana en Splash
@@ -4445,16 +4060,18 @@ f_splash_actions = ctk.CTkFrame(f_sp_inner, fg_color="transparent")
 
 def _iniciar_conexion_en_splash():
     if MODO_SIM_WINDOWS:
-        progress_splash.set(0.60)
         lbl_splash_status.configure(text="⚡ Modo Simulación activado para pruebas en Windows...", text_color=COLOR_KOSTAL_ACCENT)
-        lbl_splash_pct.configure(text="60%", text_color=COLOR_KOSTAL_ACCENT)
-        def _paso_final_sim():
-            progress_splash.configure(progress_color="#10B981")
-            progress_splash.set(1.0)
-            lbl_splash_status.configure(text="✓ Sistema Listo en MODO SIMULACIÓN.", text_color="#10B981")
-            lbl_splash_pct.configure(text="100%", text_color="#10B981")
-            ventana.after(100, _mostrar_login)
-        ventana.after(80, _paso_final_sim)
+        def _anim_sim(paso=1):
+            p = min(1.0, paso * 0.12)
+            progress_splash.set(p)
+            lbl_splash_pct.configure(text=f"{int(p*100)}%", text_color=COLOR_KOSTAL_ACCENT if p < 1.0 else "#10B981")
+            if p < 1.0:
+                ventana.after(16, lambda: _anim_sim(paso + 1))
+            else:
+                progress_splash.configure(progress_color="#10B981")
+                lbl_splash_status.configure(text="✓ Sistema Listo en MODO SIMULACIÓN.", text_color="#10B981")
+                ventana.after(60, _mostrar_login)
+        _anim_sim()
         return
 
     progress_splash.set(0.20)
@@ -4462,9 +4079,9 @@ def _iniciar_conexion_en_splash():
     lbl_splash_pct.configure(text="20%", text_color=COLOR_KOSTAL_ACCENT)
     
     def _paso_conectar():
-        progress_splash.set(0.45)
+        progress_splash.set(0.35)
         lbl_splash_status.configure(text="Comprobando comunicación con PLC WAGO (192.168.1.69:4840)...", text_color=COLOR_KOSTAL_NAVY)
-        lbl_splash_pct.configure(text="45%", text_color=COLOR_KOSTAL_ACCENT)
+        lbl_splash_pct.configure(text="35%", text_color=COLOR_KOSTAL_ACCENT)
         
         res = [None]
         def _thread_con():
@@ -4476,17 +4093,17 @@ def _iniciar_conexion_en_splash():
         
         def _verificar_hilo(intentos=0):
             if t.is_alive():
-                p_actual = min(0.75, 0.45 + (intentos * 0.04))
+                p_actual = min(0.85, 0.35 + (intentos * 0.015))
                 progress_splash.set(p_actual)
                 lbl_splash_pct.configure(text=f"{int(p_actual*100)}%", text_color=COLOR_KOSTAL_ACCENT)
-                ventana.after(60, lambda: _verificar_hilo(intentos + 1))
+                ventana.after(20, lambda: _verificar_hilo(intentos + 1))
             else:
                 if res[0] is True:
                     progress_splash.configure(progress_color="#10B981")
                     progress_splash.set(1.0)
                     lbl_splash_status.configure(text="✓ Conexión establecida con PLC WAGO exitosamente.", text_color="#10B981")
                     lbl_splash_pct.configure(text="100%", text_color="#10B981")
-                    ventana.after(120, _mostrar_login)
+                    ventana.after(80, _mostrar_login)
                 else:
                     progress_splash.configure(progress_color="#F59E0B")
                     lbl_splash_status.configure(
@@ -4496,9 +4113,9 @@ def _iniciar_conexion_en_splash():
                     lbl_splash_pct.configure(text="PAUSA", text_color="#D97706")
                     _mostrar_opciones_sin_plc()
                     
-        ventana.after(60, _verificar_hilo)
+        ventana.after(20, _verificar_hilo)
         
-    ventana.after(60, _paso_conectar)
+    ventana.after(30, _paso_conectar)
 
 def _mostrar_login():
     try:
@@ -4571,10 +4188,6 @@ ventana.after(50, _iniciar_conexion_en_splash)
 # 5.1. PANTALLA 1: LOGIN LIMPIO CON VER/OCULTAR CONTRASEÑA
 # ------------------------------------------------------------------------------
 frame_login = ctk.CTkFrame(ventana, fg_color=BG_MAIN, corner_radius=0)
-try:
-    frame_login.configure(cursor="none")
-except Exception:
-    pass
 
 # Barra superior con botones de control de ventana y teclado en Login
 f_login_top_bar = ctk.CTkFrame(frame_login, fg_color="transparent", height=40)
@@ -4759,10 +4372,6 @@ if img_logo_baluarte_login:
 # 5.2. PANTALLA 2: PANTALLA PRINCIPAL DEL OPERADOR
 # ------------------------------------------------------------------------------
 frame_operador = ctk.CTkFrame(ventana, fg_color=BG_MAIN, corner_radius=0)
-try:
-    frame_operador.configure(cursor="none")
-except Exception:
-    pass
 
 header_hmi = ctk.CTkFrame(frame_operador, fg_color="transparent", height=58, corner_radius=0)
 header_hmi.pack(fill="x", side="top", padx=12, pady=(8, 4))
@@ -5147,21 +4756,7 @@ btn_fin_hora = ctk.CTkButton(
     width=95,
     command=abrir_dialogo_fin_de_hora
 )
-btn_fin_hora.pack(side="left", padx=(0, 6), pady=8)
-
-btn_tutorial = ctk.CTkButton(
-    hdr_mid,
-    text="📖 Tutorial",
-    font=(FONT_MAIN, 10, "bold"),
-    fg_color=COLOR_KOSTAL_ACCENT,
-    hover_color=COLOR_KOSTAL_LIGHT,
-    text_color="white",
-    corner_radius=6,
-    height=28,
-    width=95,
-    command=lambda: abrir_tutorial_proceso(obligatorio=False)
-)
-btn_tutorial.pack(side="left", padx=(0, 10), pady=8)
+btn_fin_hora.pack(side="left", padx=(0, 8), pady=8)
 
 lbl_hdr_conn_status = ctk.CTkLabel(
     hdr_mid,
@@ -5873,8 +5468,11 @@ ctk.CTkLabel(
     text_color=COLOR_KOSTAL_ACCENT
 ).pack(side="right", padx=6)
 
-def dibujar_fixture_moderno():
-    canvas_fixture.delete("all")
+_fixture_layout_key = None
+_fixture_card_items = {}
+
+def dibujar_fixture_moderno(forzar_completo=False):
+    global _fixture_layout_key, _fixture_card_items
     w = canvas_fixture.winfo_width()
     h = canvas_fixture.winfo_height()
     if w < 50: w = 480
@@ -5883,6 +5481,13 @@ def dibujar_fixture_moderno():
     filas = max(1, matriz_filas)
     cols = max(1, matriz_cols)
     total_piezas = matriz_total
+    patron = config_actual.get("patron_pintado", "vertical")
+    receta_activa = next((r for r in config_actual.get("recetas", []) if r.get("nombre") == config_actual.get("receta_activa")), None)
+    ruta_img = receta_activa.get("imagen", "") if receta_activa else ""
+    vis_snapshot = tuple(coordenadas_visibles_map.get(i, coords_visibles_todas) for i in range(total_piezas))
+    coords_snapshot = tuple(matriz_coordenadas[:total_piezas])
+    
+    layout_key = (w, h, filas, cols, total_piezas, patron, ruta_img, vis_snapshot, coords_snapshot)
     
     gap_x = max(2, min(8, int(30 / cols)))
     gap_y = max(2, min(8, int(30 / filas)))
@@ -5891,14 +5496,72 @@ def dibujar_fixture_moderno():
     
     card_w = max(12.0, (w - 2 * pad_x - (cols - 1) * gap_x) / cols)
     card_h = max(12.0, (h - 2 * pad_y - (filas - 1) * gap_y) / filas)
-    
-    # Receta activa e imagen para sustituir los pequeños círculos por la imagen de la pieza
-    receta_activa = next((r for r in config_actual.get("recetas", []) if r.get("nombre") == config_actual.get("receta_activa")), None)
-    ruta_img = receta_activa.get("imagen", "") if receta_activa else ""
+    d_icon = max(14, int(min(card_w * 0.38, card_h * 0.64)))
+
+    # Fast-path en Windows: si la geometría y receta son idénticas, actualizar solo tarjetas cuyo estado cambió (0 parpadeo)
+    if not forzar_completo and _fixture_layout_key == layout_key and len(_fixture_card_items) == total_piezas:
+        recibida_plc = ultimo_plc_rx_ok if 'ultimo_plc_rx_ok' in globals() else True
+        n_p = int(config_actual.get("pasadas_tampo", 2))
+        en_pintado = bool('estado_pintar' in globals() and estado_pintar)
+        pasada_act = pasada_actual_pieza if 'pasada_actual_pieza' in globals() else 1
+        
+        for i in range(total_piezas):
+            st = fixture_piezas_estado[i] if i < len(fixture_piezas_estado) else "pendiente"
+            state_sig = (st, recibida_plc if st == "activa" else None, pasada_act if (st == "activa" and en_pintado) else None, en_pintado if st == "activa" else None)
+            info = _fixture_card_items.get(i)
+            if not info or info.get("state_sig") == state_sig:
+                continue
+            info["state_sig"] = state_sig
+            if st == "activa":
+                c_bg, c_border, c_txt, bw = "#EFF6FF", "#2563EB", "#1E3A8A", 2
+                c_pbg, c_pbd, c_ptxt = "#DBEAFE", "#93C5FD", "#1E40AF"
+                dfill, dout = "#3B82F6", "#1D4ED8"
+            elif st in ("ok", "nok"):
+                c_bg, c_border, c_txt, bw = "#F0FDF4", "#10B981", "#065F46", 2
+                c_pbg, c_pbd, c_ptxt = "#DCFCE7", "#86EFAC", "#065F46"
+                dfill, dout = "#10B981", "#047857"
+            else:
+                c_bg, c_border, c_txt, bw = "#FFFFFF", "#CBD5E1", "#334155", 1
+                c_pbg, c_pbd, c_ptxt = "#F1F5F9", "#CBD5E1", "#475569"
+                dfill, dout = "#E2E8F0", "#94A3B8"
+                
+            canvas_fixture.itemconfigure(info["bg"], fill=c_bg, outline=c_border, width=bw)
+            canvas_fixture.itemconfigure(info["num"], fill=c_txt)
+            if info.get("pill_rect"):
+                canvas_fixture.itemconfigure(info["pill_rect"], fill=c_pbg, outline=c_pbd)
+            if info.get("pill_txt"):
+                canvas_fixture.itemconfigure(info["pill_txt"], fill=c_ptxt)
+            if info.get("img_id"):
+                img_circ = obtener_imagen_circular_pieza(ruta_img, d_icon, st) if ruta_img else None
+                if img_circ:
+                    canvas_fixture.itemconfigure(info["img_id"], image=img_circ)
+            else:
+                if info.get("drop_oval"):
+                    canvas_fixture.itemconfigure(info["drop_oval"], fill=dfill, outline=dout)
+                if info.get("drop_poly"):
+                    canvas_fixture.itemconfigure(info["drop_poly"], fill=dfill, outline=dout)
+            if info.get("badge"):
+                if st == "activa":
+                    tag_txt = f"▶ P{pasada_act}/2" if (n_p == 2 and en_pintado) else ("▶ RX✓" if recibida_plc else "▶ TX")
+                    canvas_fixture.coords(info["badge"], info["badge_x"] - 6, info["badge_y"])
+                    canvas_fixture.itemconfigure(info["badge"], text=tag_txt, fill="#2563EB")
+                elif st in ("ok", "nok"):
+                    canvas_fixture.coords(info["badge"], info["badge_x"], info["badge_y"])
+                    canvas_fixture.itemconfigure(info["badge"], text="✓", fill=COLOR_OK)
+                else:
+                    canvas_fixture.itemconfigure(info["badge"], text="")
+        return
+
+    canvas_fixture.delete("all")
+    _fixture_layout_key = layout_key
+    _fixture_card_items = {}
     
     rad = max(2, min(10, int(card_h * 0.18)))
+    recibida_plc = ultimo_plc_rx_ok if 'ultimo_plc_rx_ok' in globals() else True
+    n_p = int(config_actual.get("pasadas_tampo", 2))
+    en_pintado = bool('estado_pintar' in globals() and estado_pintar)
+    pasada_act = pasada_actual_pieza if 'pasada_actual_pieza' in globals() else 1
     
-    patron = config_actual.get("patron_pintado", "vertical")
     for i in range(total_piezas):
         if patron == "vertical":
             c = i // filas
@@ -5915,24 +5578,13 @@ def dibujar_fixture_moderno():
         st = fixture_piezas_estado[i] if i < len(fixture_piezas_estado) else "pendiente"
         cx, cy = matriz_coordenadas[i] if i < len(matriz_coordenadas) else (0.0, 0.0)
         
-        # Colores idénticos al Mockup Oficial KOSTAL (Sin punto ni fondo rojo NOK en matriz)
         if st == "activa":
-            c_bg = "#EFF6FF"      # Azul claro de selección
-            c_border = "#2563EB"  # Azul vivo de contorno
-            c_txt = "#1E3A8A"     # Azul marino
-            bw = 2
+            c_bg, c_border, c_txt, bw = "#EFF6FF", "#2563EB", "#1E3A8A", 2
         elif st in ("ok", "nok"):
-            c_bg = "#F0FDF4"      # Verde pastel
-            c_border = "#10B981"  # Verde esmeralda OK
-            c_txt = "#065F46"     # Verde texto
-            bw = 2
+            c_bg, c_border, c_txt, bw = "#F0FDF4", "#10B981", "#065F46", 2
         else:
-            c_bg = "#FFFFFF"      # Blanco puro pendiente
-            c_border = "#CBD5E1"  # Borde sutil industrial
-            c_txt = "#334155"     # Gris carbón
-            bw = 1
+            c_bg, c_border, c_txt, bw = "#FFFFFF", "#CBD5E1", "#334155", 1
             
-        # Dibujar tarjeta redondeada con polígono suave
         pts = [
             x1 + rad, y1,
             x2 - rad, y1,
@@ -5947,23 +5599,23 @@ def dibujar_fixture_moderno():
             x1, y1 + rad,
             x1, y1
         ]
-        canvas_fixture.create_polygon(pts, smooth=True, fill=c_bg, outline=c_border, width=bw)
+        bg_id = canvas_fixture.create_polygon(pts, smooth=True, fill=c_bg, outline=c_border, width=bw)
         
-        # 1. Número secuencial y coordenadas a la izquierda
         es_visible_coord = coordenadas_visibles_map.get(i, coords_visibles_todas)
         num_x = x1 + card_w * 0.26
+        pill_rect_id = None
+        pill_txt_id = None
         
         if es_visible_coord:
             num_y = y1 + card_h * 0.25
             font_sz = max(9, min(13, int(card_h * 0.24)))
-            canvas_fixture.create_text(
+            num_id = canvas_fixture.create_text(
                 num_x, num_y,
                 text=f"{i+1:02d}",
                 font=(FONT_MAIN, font_sz, "bold"),
                 fill=c_txt
             )
             
-            # 2. Coordenadas a las que se envía este punto (X e Y) debajo del número
             coord_x = num_x
             coord_y = y1 + card_h * 0.69
             
@@ -5981,9 +5633,9 @@ def dibujar_fixture_moderno():
             else:
                 c_pbg, c_pbd, c_ptxt = "#F1F5F9", "#CBD5E1", "#475569"
                 
-            canvas_fixture.create_rectangle(px1, py1, px2, py2, fill=c_pbg, outline=c_pbd, width=1)
+            pill_rect_id = canvas_fixture.create_rectangle(px1, py1, px2, py2, fill=c_pbg, outline=c_pbd, width=1)
             font_sz_c = max(7, min(9, int(card_h * 0.16)))
-            canvas_fixture.create_text(
+            pill_txt_id = canvas_fixture.create_text(
                 coord_x, coord_y,
                 text=f"X:{cx:.1f}\nY:{cy:.1f}",
                 font=(FONT_MONO, font_sz_c, "bold"),
@@ -5991,27 +5643,25 @@ def dibujar_fixture_moderno():
                 justify="center"
             )
         else:
-            # Al estar ocultas, el número se centra con tipografía amplia y clara
             num_y = y1 + card_h * 0.50
             font_sz = max(11, min(16, int(card_h * 0.34)))
-            canvas_fixture.create_text(
+            num_id = canvas_fixture.create_text(
                 num_x, num_y,
                 text=f"{i+1:02d}",
                 font=(FONT_MAIN, font_sz, "bold"),
                 fill=c_txt
             )
         
-        # 3. Ícono / Imagen de la pieza a la derecha
         icon_x = x2 - card_w * 0.28
         icon_y = y1 + card_h * 0.50
-        d_icon = int(min(card_w * 0.38, card_h * 0.64))
-        d_icon = max(14, d_icon)
+        img_id = None
+        drop_oval_id = None
+        drop_poly_id = None
         
         img_circ = obtener_imagen_circular_pieza(ruta_img, d_icon, st) if ruta_img else None
         if img_circ:
-            canvas_fixture.create_image(icon_x, icon_y, image=img_circ)
+            img_id = canvas_fixture.create_image(icon_x, icon_y, image=img_circ)
         else:
-            # Símbolo vectorial fluido estilo gota / pieza oficial KOSTAL (Imagen 5)
             ir = d_icon / 2.0
             if st == "activa":
                 dfill, dout = "#3B82F6", "#1D4ED8"
@@ -6020,33 +5670,44 @@ def dibujar_fixture_moderno():
             else:
                 dfill, dout = "#E2E8F0", "#94A3B8"
             
-            canvas_fixture.create_oval(
+            drop_oval_id = canvas_fixture.create_oval(
                 icon_x - ir * 0.65, icon_y - ir * 0.3,
                 icon_x + ir * 0.65, icon_y + ir * 0.85,
                 fill=dfill, outline=dout, width=1
             )
-            canvas_fixture.create_polygon(
+            drop_poly_id = canvas_fixture.create_polygon(
                 icon_x - ir * 0.5, icon_y,
                 icon_x, icon_y - ir * 0.9,
                 icon_x + ir * 0.5, icon_y,
                 fill=dfill, outline=dout, smooth=True
             )
             
-        # 4. Marcador de estado y recepción PLC en esquina superior derecha (sin rojo NOK)
         badge_x = x2 - 8
         badge_y = y1 + 9
         if st == "activa":
-            recibida_plc = ultimo_plc_rx_ok if 'ultimo_plc_rx_ok' in globals() else True
-            n_p = int(config_actual.get("pasadas_tampo", 2))
-            if n_p == 2 and 'estado_pintar' in globals() and estado_pintar:
-                tag_txt = f"▶ P{pasada_actual_pieza}/2"
-            else:
-                tag_txt = "▶ RX✓" if recibida_plc else "▶ TX"
-            canvas_fixture.create_text(badge_x - 6, badge_y, text=tag_txt, font=(FONT_MAIN, 8, "bold"), fill="#2563EB")
+            tag_txt = f"▶ P{pasada_act}/2" if (n_p == 2 and en_pintado) else ("▶ RX✓" if recibida_plc else "▶ TX")
+            badge_id = canvas_fixture.create_text(badge_x - 6, badge_y, text=tag_txt, font=(FONT_MAIN, 8, "bold"), fill="#2563EB")
         elif st in ("ok", "nok"):
-            canvas_fixture.create_text(badge_x, badge_y, text="✓", font=(FONT_MAIN, 9, "bold"), fill=COLOR_OK)
+            badge_id = canvas_fixture.create_text(badge_x, badge_y, text="✓", font=(FONT_MAIN, 9, "bold"), fill=COLOR_OK)
+        else:
+            badge_id = canvas_fixture.create_text(badge_x, badge_y, text="", font=(FONT_MAIN, 8, "bold"), fill=COLOR_OK)
+            
+        state_sig = (st, recibida_plc if st == "activa" else None, pasada_act if (st == "activa" and en_pintado) else None, en_pintado if st == "activa" else None)
+        _fixture_card_items[i] = {
+            "bg": bg_id,
+            "num": num_id,
+            "pill_rect": pill_rect_id,
+            "pill_txt": pill_txt_id,
+            "img_id": img_id,
+            "drop_oval": drop_oval_id,
+            "drop_poly": drop_poly_id,
+            "badge": badge_id,
+            "badge_x": badge_x,
+            "badge_y": badge_y,
+            "state_sig": state_sig
+        }
 
-# Redimensionamiento suave (con debounce de 25ms para evitar trabas o jank)
+# Redimensionamiento suave a ~60 FPS (con debounce de 16ms para evitar trabas o jank)
 _fixture_resize_timer = None
 def al_redimensionar_fixture(event=None):
     global _fixture_resize_timer
@@ -6055,7 +5716,7 @@ def al_redimensionar_fixture(event=None):
             ventana.after_cancel(_fixture_resize_timer)
         except Exception:
             pass
-    _fixture_resize_timer = ventana.after(25, dibujar_fixture_moderno)
+    _fixture_resize_timer = ventana.after(16, dibujar_fixture_moderno)
 
 canvas_fixture.bind("<Configure>", al_redimensionar_fixture)
 
@@ -6638,10 +6299,6 @@ btn_stop.pack(fill="x", pady=(2, 0))
 # 5.3. PANTALLA 3: MÓDULO ADMINISTRADOR (ESTILO 1:1 INTERFAZ_KOSTAL)
 # ------------------------------------------------------------------------------
 frame_admin = ctk.CTkFrame(ventana, fg_color=BG_MAIN, corner_radius=0)
-try:
-    frame_admin.configure(cursor="none")
-except Exception:
-    pass
 
 # Header Superior de Admin (Blanco limpio con Título, Subtítulo, Logo Baluarte y Reloj - Imágenes 1-4)
 hdr_admin = ctk.CTkFrame(frame_admin, fg_color="#FFFFFF", height=60, corner_radius=0, border_width=1, border_color=BORDER_CARD)
@@ -7803,14 +7460,11 @@ def guardar_o_actualizar_usuario():
             break
             
     if idx_existente >= 0:
-        usr_obj["tutorial_completado"] = USUARIOS_SISTEMA[idx_existente].get("tutorial_completado", True)
         USUARIOS_SISTEMA[idx_existente] = usr_obj
         msg = f"Usuario '{nom_val}' actualizado correctamente."
     else:
-        # REQUERIMIENTO OBLIGATORIO: Nuevo usuario debe completar el tutorial
-        usr_obj["tutorial_completado"] = False
         USUARIOS_SISTEMA.append(usr_obj)
-        msg = f"Nuevo usuario '{nom_val}' registrado exitosamente.\n(Se le exigirá completar el tutorial obligatorio en su primer inicio de sesión)."
+        msg = f"Nuevo usuario '{nom_val}' registrado exitosamente."
         
     config_actual["usuarios"] = list(USUARIOS_SISTEMA)
     guardar_configuracion()
