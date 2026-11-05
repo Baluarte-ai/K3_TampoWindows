@@ -10,8 +10,8 @@ import customtkinter as ctk
 import pandas as pd
 from opcua import Client, Server, ua
 
-# Bandera para activar Modo Simulación explícito (al ejecutar simulacion_windows.py o pasar --sim).
-# En producción (tanto en Windows 10/11 como en Linux), kostalcode.py inicia en modo industrial
+# Bandera para activar Modo Simulación explícito (al pasar --sim o HMI_SIMULACION=1).
+# En producción en Windows 10/11, kostalcode.py inicia en modo industrial completo
 # conectándose automáticamente al PLC WAGO (192.168.1.69:4840).
 MODO_SIM_WINDOWS = (
     os.environ.get("HMI_SIMULACION") == "1"
@@ -20,7 +20,7 @@ MODO_SIM_WINDOWS = (
 )
 
 # ==============================================================================
-# PARCHE DE SOPORTE PARA PANTALLAS TÁCTILES (WINDOWS 10/11 & LINUX INDUSTRIAL)
+# PARCHE DE SOPORTE PARA PANTALLAS TÁCTILES (WINDOWS 10/11 INDUSTRIAL)
 # ==============================================================================
 # En pantallas táctiles industriales, los toques rápidos disparan <ButtonPress-1> y
 # <ButtonRelease-1> sin generar previamente un evento de movimiento/hover (<Enter>).
@@ -28,39 +28,16 @@ MODO_SIM_WINDOWS = (
 # Además, un ligero deslizamiento del dedo durante el toque activa <Leave>.
 # Este parche asegura que los toques táctiles siempre se registren correctamente.
 try:
-    # Estado de visibilidad del teclado táctil
+    # Estado de visibilidad del teclado táctil de Windows
     _estado_teclado_visible = False
 
-    # Función para solicitar cierre del teclado cuando ya no se usa (ejecución asíncrona no bloqueante)
+    # Función para solicitar cierre del teclado táctil de Windows cuando ya no se usa
     def ocultar_teclado_nativo(e=None, forzar=False):
         global _estado_teclado_visible
         if not _estado_teclado_visible and not forzar:
             return
         _estado_teclado_visible = False
-        if sys.platform.startswith("linux"):
-            import threading
-            def _async_ocultar():
-                try:
-                    import subprocess
-                    subprocess.run([
-                        "dbus-send", "--type=method_call",
-                        "--dest=org.onboard.Onboard",
-                        "/org/onboard/Onboard/Keyboard",
-                        "org.onboard.Onboard.Keyboard.Hide"
-                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=0.4)
-                    subprocess.run([
-                        "gdbus", "call", "--session",
-                        "--dest", "org.gnome.Shell",
-                        "--object-path", "/org/gnome/Shell",
-                        "--method", "org.gnome.Shell.Eval",
-                        "Main.keyboard.close();"
-                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=0.4)
-                    if forzar:
-                        subprocess.run(["pkill", "-f", "onboard"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=0.4)
-                except Exception:
-                    pass
-            threading.Thread(target=_async_ocultar, daemon=True).start()
-        elif sys.platform == "win32" and forzar:
+        if forzar:
             import threading
             def _async_ocultar_win():
                 try:
@@ -92,8 +69,7 @@ try:
             if _estado_teclado_visible:
                 ocultar_teclado_nativo()
             if self._command is not None:
-                # Ejecutar el comando diferido 15ms después para que el sistema gráfico libere primero
-                # el pointer grab implícito del toque táctil y nunca se congele la pantalla
+                # Ejecutar el comando diferido 15ms después para liberar el evento táctil inmediatamente
                 try:
                     self.after(15, self._command)
                 except Exception:
@@ -102,11 +78,6 @@ try:
     _orig_btn_draw = ctk.CTkButton._draw
     def _patched_btn_draw(self, no_color_updates=False):
         _orig_btn_draw(self, no_color_updates)
-        if sys.platform.startswith("linux"):
-            try:
-                self.configure(cursor="none")
-            except Exception:
-                pass
         for w in [self._canvas, self._text_label, self._image_label]:
             if w is not None and not getattr(w, "_touch_press_bound", False):
                 w._touch_press_bound = True
@@ -118,42 +89,16 @@ try:
     ctk.CTkButton._on_release = _patched_btn_on_release
     ctk.CTkButton._draw = _patched_btn_draw
 
-    # Función para solicitar apertura del teclado táctil en Windows 10/11 y Linux (asíncrona y debounced)
+    # Función para solicitar apertura del teclado táctil nativo de Windows 10/11 (asíncrona y debounced)
     _ultimo_invocar_teclado_ts = 0.0
-    def invocar_teclado_nativo_ubuntu(e=None, forzar=False):
+    def invocar_teclado_nativo(e=None, forzar=False):
         global _estado_teclado_visible, _ultimo_invocar_teclado_ts
         ahora = time.time()
         if _estado_teclado_visible and not forzar and (ahora - _ultimo_invocar_teclado_ts < 0.8):
             return
         _ultimo_invocar_teclado_ts = ahora
         _estado_teclado_visible = True
-        if sys.platform.startswith("linux"):
-            import threading
-            def _async_mostrar():
-                try:
-                    import subprocess
-                    # Desplegar Onboard si está disponible
-                    subprocess.run(["onboard"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=0.4)
-                    subprocess.run([
-                        "dbus-send", "--type=method_call",
-                        "--dest=org.onboard.Onboard",
-                        "/org/onboard/Onboard/Keyboard",
-                        "org.onboard.Onboard.Keyboard.Show"
-                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=0.4)
-                    # GNOME Shell teclado nativo
-                    subprocess.run([
-                        "gdbus", "call", "--session",
-                        "--dest", "org.gnome.Shell",
-                        "--object-path", "/org/gnome/Shell",
-                        "--method", "org.gnome.Shell.Eval",
-                        "Main.keyboard.open(null, true);"
-                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=0.4)
-                    subprocess.run(["wmctrl", "-r", "Onboard", "-b", "add,above"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=0.4)
-                    subprocess.run(["wmctrl", "-a", "Onboard"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=0.4)
-                except Exception:
-                    pass
-            threading.Thread(target=_async_mostrar, daemon=True).start()
-        elif sys.platform == "win32" and (forzar or not MODO_SIM_WINDOWS):
+        if forzar or not MODO_SIM_WINDOWS:
             import threading
             def _async_mostrar_win():
                 try:
@@ -172,12 +117,12 @@ try:
             threading.Thread(target=_async_mostrar_win, daemon=True).start()
 
     def alternar_teclado_tactil():
-        """Alterna visibilidad del teclado táctil con un solo toque del operador"""
+        """Alterna visibilidad del teclado táctil de Windows con un solo toque del operador"""
         global _estado_teclado_visible
         if _estado_teclado_visible:
             ocultar_teclado_nativo(forzar=True)
         else:
-            invocar_teclado_nativo_ubuntu(forzar=True)
+            invocar_teclado_nativo(forzar=True)
 
     # En CTkEntry, asegurar que al tocar reciba foco inmediato y despliegue teclado sin bloquear.
     # Soporta teclas Enter y KP_Enter para confirmación fluida.
@@ -190,7 +135,7 @@ try:
             try:
                 if hasattr(self, "_entry") and self._entry is not None:
                     self._entry.focus_set()
-                invocar_teclado_nativo_ubuntu()
+                invocar_teclado_nativo()
             except Exception:
                 pass
 
@@ -282,9 +227,9 @@ COLOR_PURPLE_HOVER  = "#6D28D9"
 COLOR_PURPLE_SOFT   = "#F3E8FF"
 COLOR_PURPLE_TEXT   = "#7E22CE"
 
-# Fuentes escaladas industriales (Adaptativas para Linux Ubuntu y Windows)
-FONT_MAIN           = "Ubuntu" if sys.platform.startswith("linux") else "Segoe UI"
-FONT_MONO           = "Ubuntu Mono" if sys.platform.startswith("linux") else "Consolas"
+# Fuentes escaladas industriales para Windows 10/11
+FONT_MAIN           = "Segoe UI"
+FONT_MONO           = "Consolas"
 
 # ==============================================================================
 # LÍMITES FÍSICOS DE COORDENADAS (Eje X: 0.0 a 88.0 mm | Eje Y: 0.0 a 200.0 mm)
@@ -3817,7 +3762,7 @@ def cerrar_aplicacion():
     os._exit(0)
 
 def minimizar_ventana():
-    """Minimiza la ventana asegurando compatibilidad con Linux/X11 y pantalla completa"""
+    """Minimiza la ventana asegurando compatibilidad con pantalla completa en Windows"""
     try:
         if ventana.attributes("-fullscreen"):
             ventana.attributes("-fullscreen", False)
@@ -4298,23 +4243,15 @@ else:
     ventana.minsize(1280, 720)
 
 ventana.configure(fg_color=BG_MAIN)
-if not MODO_SIM_WINDOWS and sys.platform.startswith("linux"):
-    try:
-        ventana.config(cursor="none")
-    except Exception:
-        pass
 ventana.protocol("WM_DELETE_WINDOW", cerrar_aplicacion)
 
 if not MODO_SIM_WINDOWS:
-    # Modo Pantalla Completa nativa (Resolución objetivo 1920x1080)
+    # Modo Pantalla Completa nativa en Windows (Resolución objetivo 1920x1080)
     try:
         ventana.attributes("-fullscreen", True)
     except Exception:
         try:
-            if sys.platform.startswith("linux"):
-                ventana.attributes("-zoomed", True)
-            else:
-                ventana.state("zoomed")
+            ventana.state("zoomed")
         except Exception:
             pass
 
@@ -5182,7 +5119,6 @@ def abrir_dialogo_fin_de_hora():
                 try:
                     dialogo.grab_set()
                 except Exception:
-                    # En X11/Wayland (Linux) si aún no es viewable, reintentar tras mapearse
                     try:
                         dialogo.after(120, _reintentar_grab_fin_hora)
                     except Exception:
