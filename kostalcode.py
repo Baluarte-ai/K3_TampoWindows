@@ -78,6 +78,12 @@ try:
             if ahora - ultimo < 0.07:
                 return
             self._ultimo_toque_ts = ahora
+            # Micro-interacción visual instantánea al presionar
+            try:
+                self._on_enter()
+                self.after(85, self._on_leave)
+            except Exception:
+                pass
             # Al tocar cualquier botón de acción, ocultar el teclado automáticamente si estaba abierto
             if _estado_teclado_visible:
                 ocultar_teclado_nativo()
@@ -172,27 +178,38 @@ try:
     ctk.CTkEntry.__init__ = _patched_entry_init
 
     # -------------------------------------------------------------------------
-    # ESCALADO DE FUENTES PARA PANTALLAS TÁCTILES INDUSTRIALES
-    # Aumenta automáticamente el tamaño de textos para máxima legibilidad
-    # en la pantalla táctil industrial (evitando fuentes microscópicas de 8-10pt)
+    # MOTOR TIPOGRÁFICO PIXEL-EXACT PARA WINDOWS 10/11 (INDEPENDIENTE DE DPI 125%/150%)
+    # En Tkinter sobre Windows, los tamaños positivos (pt) se multiplican por el DPI del
+    # sistema (ej. 125% = 120 DPI -> 1.67x), desbordando botones y tarjetas.
+    # Al convertir a valores negativos (-px), Tkinter fija la altura exacta en píxeles
+    # manteniendo proporciones armónicas 1:1 con los contenedores en cualquier monitor.
     # -------------------------------------------------------------------------
+    _escala_fuente_dinamica = 1.0
     _orig_apply_font_scaling = ctk.windows.widgets.scaling.scaling_base_class.CTkScalingBaseClass._apply_font_scaling
     def _patched_apply_font_scaling(self, font):
         if isinstance(font, tuple) and len(font) >= 2 and isinstance(font[1], (int, float)):
             size = font[1]
-            if size <= 8:
-                new_size = 11
-            elif size <= 10:
-                new_size = int(round(size * 1.35))   # 9 -> 12, 10 -> 14
-            elif size <= 12:
-                new_size = int(round(size * 1.30))   # 11 -> 14, 12 -> 16
-            elif size <= 14:
-                new_size = int(round(size * 1.25))   # 13 -> 16, 14 -> 18
-            elif size <= 18:
-                new_size = int(round(size * 1.20))   # 15 -> 18, 17 -> 20, 18 -> 22
-            else:
-                new_size = int(round(size * 1.15))
-            font = (font[0], new_size) + font[2:]
+            if size > 0:
+                if size <= 8:
+                    px_size = 12
+                elif size == 9:
+                    px_size = 13
+                elif size == 10:
+                    px_size = 14
+                elif size == 11:
+                    px_size = 15
+                elif size == 12:
+                    px_size = 16
+                elif size == 13:
+                    px_size = 17
+                elif size == 14:
+                    px_size = 19
+                elif size <= 16:
+                    px_size = int(round(size * 1.32))
+                else:
+                    px_size = int(round(size * 1.28))
+                px_final = max(11, int(round(px_size * _escala_fuente_dinamica)))
+                font = (font[0], -px_final) + font[2:]
         return _orig_apply_font_scaling(self, font)
     ctk.windows.widgets.scaling.scaling_base_class.CTkScalingBaseClass._apply_font_scaling = _patched_apply_font_scaling
 except Exception as _e_patch:
@@ -1077,10 +1094,7 @@ def mostrar_alerta_cambio_jig(nombre_receta):
             pass
         
         try:
-            top_jig.update_idletasks()
-            vx = ventana.winfo_x() + (ventana.winfo_width() // 2) - 245
-            vy = ventana.winfo_y() + (ventana.winfo_height() // 2) - 155
-            top_jig.geometry(f"+{max(0, vx)}+{max(0, vy)}")
+            _animar_apertura_modal(top_jig, 490, 310)
         except Exception:
             pass
 
@@ -2249,9 +2263,7 @@ def abrir_teclado_numerico_paso():
         pass
     
     try:
-        x = ventana.winfo_x() + (ventana.winfo_width() // 2) - 170
-        y = ventana.winfo_y() + (ventana.winfo_height() // 2) - 220
-        dlg.geometry(f"+{x}+{y}")
+        _animar_apertura_modal(dlg, 340, 440)
     except Exception:
         pass
 
@@ -3455,6 +3467,38 @@ def centrar_ventana(win, ancho, alto):
         except Exception:
             pass
 
+def _animar_apertura_modal(win, ancho, alto):
+    """Abre un diálogo modal con animación DWM a 60 FPS (Fade-In + deslizamiento suave cubic ease-out)"""
+    try:
+        win.attributes("-alpha", 0.0)
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+        x = max(0, int((sw - ancho) / 2))
+        y_final = max(0, int((sh - alto) / 2))
+        y_inicio = y_final + 18
+        win.geometry(f"{ancho}x{alto}+{x}+{y_inicio}")
+        pasos = 9
+        def _step(i=1):
+            if not win.winfo_exists():
+                return
+            t = i / float(pasos)
+            ease = 1.0 - ((1.0 - t) ** 3)
+            y_cur = int(round(y_inicio + (y_final - y_inicio) * ease))
+            try:
+                win.geometry(f"{ancho}x{alto}+{x}+{y_cur}")
+                win.attributes("-alpha", min(1.0, ease))
+            except Exception:
+                pass
+            if i < pasos:
+                win.after(14, lambda: _step(i + 1))
+        win.after(10, _step)
+    except Exception:
+        centrar_ventana(win, ancho, alto)
+        try:
+            win.attributes("-alpha", 1.0)
+        except Exception:
+            pass
+
 _top_dialogo_jig = None
 
 def abrir_dialogo_seleccion_jig():
@@ -3481,7 +3525,7 @@ def abrir_dialogo_seleccion_jig():
         top_jig.configure(fg_color=BG_MAIN)
         top_jig.transient(ventana)
         
-        centrar_ventana(top_jig, 560, 430)
+        _animar_apertura_modal(top_jig, 560, 430)
         try:
             top_jig.lift()
             top_jig.focus_force()
@@ -3688,6 +3732,51 @@ def abrir_dialogo_seleccion_jig():
 
 abrir_asistente_inicio_sesion = abrir_dialogo_seleccion_jig
 
+_vista_activa_hmi = "splash"
+_anim_vista_id = None
+
+def animar_cambio_vista(frame_destino, nombre_vista, card_centrada=None):
+    """
+    Cambia instantáneamente la vista pre-renderizada en contenedor_vistas mediante tkraise()
+    (sin recalcular geometría ni redimensionar widgets en vivo) y aplica una micro-animación
+    a 60 FPS (cubic ease-out) para una transición moderna y fluida en Windows.
+    """
+    global _vista_activa_hmi, _anim_vista_id
+    _vista_activa_hmi = nombre_vista
+    if _anim_vista_id is not None:
+        try:
+            ventana.after_cancel(_anim_vista_id)
+        except Exception:
+            pass
+        _anim_vista_id = None
+
+    try:
+        frame_destino.tkraise()
+    except Exception:
+        pass
+
+    if card_centrada is not None:
+        pasos = 10
+        y_ini = 0.535
+        y_fin = 0.50
+        def _step_card(i=1):
+            global _anim_vista_id
+            t = i / float(pasos)
+            ease = 1.0 - ((1.0 - t) ** 3)
+            ry = y_ini + (y_fin - y_ini) * ease
+            try:
+                card_centrada.place_configure(rely=ry)
+            except Exception:
+                pass
+            if i < pasos:
+                _anim_vista_id = ventana.after(14, lambda: _step_card(i + 1))
+            else:
+                _anim_vista_id = None
+        _step_card(1)
+    else:
+        if nombre_vista == "operador" and 'dibujar_fixture_moderno' in globals():
+            ventana.after(10, lambda: dibujar_fixture_moderno(forzar_completo=True))
+
 def iniciar_sesion(usuario_seleccionado, rol="OPERADOR"):
     """
     Inicia sesión.
@@ -3711,9 +3800,7 @@ def iniciar_sesion(usuario_seleccionado, rol="OPERADOR"):
     segundos_sesion = 0
     actualizar_temporizador_sesion()
     
-    frame_login.pack_forget()
-    frame_admin.pack_forget()
-    frame_operador.pack(fill="both", expand=True)
+    animar_cambio_vista(frame_operador, "operador")
     
     global cero_ha_sido_seteado, cero_guardado_x, cero_guardado_y
     # Comprobar si la receta activa actual ya tiene su Set 0 predeterminado ajustado
@@ -3795,22 +3882,18 @@ def cerrar_sesion():
             pass
         _top_dialogo_jig = None
 
-    frame_operador.pack_forget()
-    frame_admin.pack_forget()
-    frame_login.pack(fill="both", expand=True)
     entry_pass.delete(0, tk.END)
+    animar_cambio_vista(frame_login, "login", card_centrada=card_login)
     lbl_estado.configure(text="Sesión cerrada. Esperando autenticación...", text_color=TEXT_MUTED)
 
 def ir_a_panel_admin():
     ocultar_teclado_nativo()
-    frame_operador.pack_forget()
-    frame_admin.pack(fill="both", expand=True)
+    animar_cambio_vista(frame_admin, "admin")
     lbl_estado.configure(text="Módulo de Administración abierto (Recetas, Exportar Excel, Usuarios).", text_color=COLOR_KOSTAL_NAVY)
 
 def volver_a_panel_operador():
     ocultar_teclado_nativo()
-    frame_admin.pack_forget()
-    frame_operador.pack(fill="both", expand=True)
+    animar_cambio_vista(frame_operador, "operador")
     lbl_estado.configure(text="Retorno a Panel de Operador.", text_color=COLOR_OK)
 
 def actualizar_reloj_y_fecha():
@@ -3838,26 +3921,27 @@ def actualizar_temporizador_sesion():
     temporizador_sesion_id = ventana.after(1000, actualizar_temporizador_sesion)
 
 # ==============================================================================
-# 5. VENTANA PRINCIPAL (CUSTOMTKINTER)
+# 5. VENTANA PRINCIPAL (CUSTOMTKINTER) — ARQUITECTURA PRE-RENDERIZADA SIN SALTOS
 # ==============================================================================
 ventana = ctk.CTk()
+# Iniciar ventana transparente mientras se pre-renderizan todas las vistas en memoria
+try:
+    ventana.attributes("-alpha", 0.0)
+except Exception:
+    pass
+
 try:
     _sw_real = ventana.winfo_screenwidth()
     _sh_real = ventana.winfo_screenheight()
-    # Si el monitor tiene resolución menor a 1920x1080, ajustar escala proporcionalmente
-    if _sw_real < 1900:
-        _escala_mon = max(0.75, min(1.0, round(_sw_real / 1920.0, 2)))
-        ctk.set_widget_scaling(_escala_mon)
-        ctk.set_window_scaling(1.0)
-    else:
-        ctk.set_widget_scaling(1.0)
-        ctk.set_window_scaling(1.0)
+    _escala_fuente_dinamica = max(0.85, min(1.05, round(_sh_real / 1080.0, 2)))
+    ctk.set_widget_scaling(1.0)
+    ctk.set_window_scaling(1.0)
 except Exception:
     _sw_real, _sh_real = 1920, 1080
 
 if MODO_SIM_WINDOWS:
     ventana.title("KOSTAL Industrial HMI — Modo Simulación Windows (Pruebas)")
-    tk.Tk.geometry(ventana, "1400x860+60+20")
+    tk.Tk.geometry(ventana, f"{min(1600, _sw_real - 60)}x{min(920, _sh_real - 60)}+30+20")
     ventana.minsize(1180, 700)
 else:
     ventana.title("KOSTAL Industrial HMI - Estación de Inserción y Pintado SMC")
@@ -3867,16 +3951,12 @@ else:
 ventana.configure(fg_color=BG_MAIN)
 ventana.protocol("WM_DELETE_WINDOW", cerrar_aplicacion)
 
-if not MODO_SIM_WINDOWS:
-    # Modo Pantalla Completa nativa en Windows: aplicar al inicio y re-aplicar tras el deiconify interno de CustomTkinter
-    aplicar_pantalla_completa_windows()
-    ventana.after(80, aplicar_pantalla_completa_windows)
-    ventana.after(250, aplicar_pantalla_completa_windows)
-    ventana.after(600, aplicar_pantalla_completa_windows)
-
-# Traer la interfaz al frente de la terminal y asegurar foco sin atrapar capas
-ventana.lift()
-ventana.focus_force()
+# Contenedor maestro de vistas (Splash, Login, Operador y Admin apilados con Grid 1x1)
+# Esto garantiza que todas las vistas ya tengan su geometría 100% calculada antes de mostrarse,
+# eliminando por completo el redimensionamiento progresivo ("despliegue feo") al cambiar de pantalla.
+contenedor_vistas = ctk.CTkFrame(ventana, fg_color=BG_MAIN, corner_radius=0)
+contenedor_vistas.rowconfigure(0, weight=1)
+contenedor_vistas.columnconfigure(0, weight=1)
 
 # Atajos para alternar pantalla completa o salir con teclado
 ventana.bind("<F11>", lambda e: alternar_pantalla_completa())
@@ -3937,8 +4017,8 @@ img_logo_baluarte_panel = cargar_imagen("LOGO_BALUARTE.png", 270, 68)
 # ------------------------------------------------------------------------------
 # 5.0. PANTALLA DE CARGA INDUSTRIAL (SPLASH SCREEN KOSTAL & BALUARTE)
 # ------------------------------------------------------------------------------
-frame_splash = ctk.CTkFrame(ventana, fg_color=BG_MAIN, corner_radius=0)
-frame_splash.pack(fill="both", expand=True)
+frame_splash = ctk.CTkFrame(contenedor_vistas, fg_color=BG_MAIN, corner_radius=0)
+frame_splash.grid(row=0, column=0, sticky="nsew")
 
 # Barra superior con botones de ventana en Splash
 f_sp_top_bar = ctk.CTkFrame(frame_splash, fg_color="transparent", height=40)
@@ -4119,8 +4199,8 @@ def _iniciar_conexion_en_splash():
 
 def _mostrar_login():
     try:
-        frame_splash.pack_forget()
-        frame_login.pack(fill="both", expand=True)
+        animar_cambio_vista(frame_login, "login", card_centrada=card_login)
+        ventana.after(120, lambda: entry_pass.focus_force())
     except Exception:
         pass
 
@@ -4187,7 +4267,8 @@ ventana.after(50, _iniciar_conexion_en_splash)
 # ------------------------------------------------------------------------------
 # 5.1. PANTALLA 1: LOGIN LIMPIO CON VER/OCULTAR CONTRASEÑA
 # ------------------------------------------------------------------------------
-frame_login = ctk.CTkFrame(ventana, fg_color=BG_MAIN, corner_radius=0)
+frame_login = ctk.CTkFrame(contenedor_vistas, fg_color=BG_MAIN, corner_radius=0)
+frame_login.grid(row=0, column=0, sticky="nsew")
 
 # Barra superior con botones de control de ventana y teclado en Login
 f_login_top_bar = ctk.CTkFrame(frame_login, fg_color="transparent", height=40)
@@ -4355,7 +4436,7 @@ entry_pass.bind("<KP_Enter>", _al_presionar_enter_login)
 
 def _on_ventana_return_global(e=None):
     try:
-        if 'frame_login' in globals() and frame_login.winfo_ismapped():
+        if _vista_activa_hmi == "login":
             _al_presionar_enter_login(e)
     except Exception:
         pass
@@ -4371,7 +4452,8 @@ if img_logo_baluarte_login:
 # ------------------------------------------------------------------------------
 # 5.2. PANTALLA 2: PANTALLA PRINCIPAL DEL OPERADOR
 # ------------------------------------------------------------------------------
-frame_operador = ctk.CTkFrame(ventana, fg_color=BG_MAIN, corner_radius=0)
+frame_operador = ctk.CTkFrame(contenedor_vistas, fg_color=BG_MAIN, corner_radius=0)
+frame_operador.grid(row=0, column=0, sticky="nsew")
 
 header_hmi = ctk.CTkFrame(frame_operador, fg_color="transparent", height=58, corner_radius=0)
 header_hmi.pack(fill="x", side="top", padx=12, pady=(8, 4))
@@ -4464,7 +4546,7 @@ def abrir_dialogo_fin_de_hora():
             dialogo.transient(ventana)
         except Exception:
             pass
-        centrar_ventana(dialogo, 480, 470)
+        _animar_apertura_modal(dialogo, 480, 470)
         
         f_d_inner = ctk.CTkFrame(dialogo, fg_color=BG_CARD, corner_radius=12, border_width=1, border_color=BORDER_CARD)
         f_d_inner.pack(padx=18, pady=18, fill="both", expand=True)
@@ -4968,13 +5050,14 @@ btn_fs_top.pack(side="left", padx=(0, 10), pady=8)
 body_grid = ctk.CTkFrame(frame_operador, fg_color=BG_MAIN, corner_radius=0)
 body_grid.pack(fill="both", expand=True, padx=12, pady=10)
 
-# Columna 0 (Proceso): Ancho optimizado y más compacto
-body_grid.columnconfigure(0, weight=20)
+# Columna 0 (Proceso): Ancho optimizado y bloqueado proporcionalmente (uniform="hmi_col")
+body_grid.columnconfigure(0, weight=21, uniform="hmi_col")
 # Columna 1 (Matriz de Piezas): Mayor amplitud visual
-body_grid.columnconfigure(1, weight=54)
+body_grid.columnconfigure(1, weight=53, uniform="hmi_col")
 # Columna 2 (JOG y Mandos): Espacio ergonómico para botones
-body_grid.columnconfigure(2, weight=26)
+body_grid.columnconfigure(2, weight=26, uniform="hmi_col")
 body_grid.rowconfigure(0, weight=1)
+body_grid.grid_propagate(False)
 
 def crear_card_moderna(parent, titulo=None, btn_widget=None):
     c = ctk.CTkFrame(parent, fg_color="#FFFFFF", corner_radius=8, border_width=1, border_color="#CBD5E1")
@@ -5000,7 +5083,8 @@ def crear_card_moderna(parent, titulo=None, btn_widget=None):
 # COLUMNA 1 (IZQUIERDA): PROCESO + MANDOS (PARO, INICIO, RESET, PINTAR)
 # ==============================================================================
 col_1 = ctk.CTkFrame(body_grid, fg_color="transparent")
-col_1.grid(row=0, column=0, sticky="nsew", padx=6)
+col_1.grid(row=0, column=0, sticky="nsew", padx=5)
+col_1.pack_propagate(False)
 
 # 1. Información de Proceso
 card_proc = crear_card_moderna(col_1, "Información de Proceso")
@@ -5184,7 +5268,8 @@ lbl_pintar_sub.pack(side="bottom", pady=(2, 4))
 # COLUMNA 2 (CENTRAL): ESTADO DEL FIXTURE (3x5) + DIAGNÓSTICO
 # ==============================================================================
 col_2 = ctk.CTkFrame(body_grid, fg_color="transparent")
-col_2.grid(row=0, column=1, sticky="nsew", padx=6)
+col_2.grid(row=0, column=1, sticky="nsew", padx=5)
+col_2.pack_propagate(False)
 
 card_fixture = crear_card_moderna(
     col_2, 
@@ -5381,54 +5466,144 @@ btn_probar_mov = ctk.CTkButton(
 )
 btn_probar_mov.pack(side="right", padx=6, pady=3)
 
-canvas_fixture = tk.Canvas(card_fixture, bg="#FFFFFF", highlightthickness=0, height=235)
-canvas_fixture.pack(fill="both", expand=True, padx=8, pady=4)
+# Barra de progreso animada a 60 FPS del ciclo del Jig
+f_prog_jig_bar = ctk.CTkFrame(card_fixture, fg_color="transparent")
+f_prog_jig_bar.pack(fill="x", padx=10, pady=(1, 2))
+
+progress_ciclo_fixture = ctk.CTkProgressBar(
+    f_prog_jig_bar,
+    height=6,
+    corner_radius=3,
+    fg_color="#E2E8F0",
+    progress_color=COLOR_KOSTAL_ACCENT
+)
+progress_ciclo_fixture.set(0.0)
+progress_ciclo_fixture.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+lbl_prog_jig_pct = ctk.CTkLabel(
+    f_prog_jig_bar,
+    text="0%",
+    font=(FONT_MONO, 9, "bold"),
+    text_color=COLOR_KOSTAL_NAVY,
+    width=34
+)
+lbl_prog_jig_pct.pack(side="right")
+
+_prog_jig_actual = 0.0
+_prog_jig_anim_id = None
+
+def animar_progreso_ciclo(target_ratio):
+    global _prog_jig_actual, _prog_jig_anim_id
+    target_ratio = max(0.0, min(1.0, float(target_ratio)))
+    if _prog_jig_anim_id is not None:
+        try:
+            ventana.after_cancel(_prog_jig_anim_id)
+        except Exception:
+            pass
+        _prog_jig_anim_id = None
+    start_val = _prog_jig_actual
+    diff = target_ratio - start_val
+    if abs(diff) < 0.005:
+        _prog_jig_actual = target_ratio
+        try:
+            progress_ciclo_fixture.set(target_ratio)
+            progress_ciclo_fixture.configure(progress_color=COLOR_OK if target_ratio >= 0.999 else COLOR_KOSTAL_ACCENT)
+            lbl_prog_jig_pct.configure(text=f"{int(round(target_ratio * 100))}%")
+        except Exception:
+            pass
+        return
+    pasos = 10
+    def _step_prog(i=1):
+        global _prog_jig_actual, _prog_jig_anim_id
+        t = i / float(pasos)
+        ease = 1.0 - ((1.0 - t) ** 3)
+        _prog_jig_actual = start_val + diff * ease
+        try:
+            progress_ciclo_fixture.set(_prog_jig_actual)
+            progress_ciclo_fixture.configure(progress_color=COLOR_OK if _prog_jig_actual >= 0.995 else COLOR_KOSTAL_ACCENT)
+            lbl_prog_jig_pct.configure(text=f"{int(round(_prog_jig_actual * 100))}%")
+        except Exception:
+            pass
+        if i < pasos:
+            _prog_jig_anim_id = ventana.after(15, lambda: _step_prog(i + 1))
+        else:
+            _prog_jig_anim_id = None
+    _step_prog(1)
+
+canvas_fixture = tk.Canvas(card_fixture, bg="#FFFFFF", highlightthickness=0, height=230)
+canvas_fixture.pack(fill="both", expand=True, padx=8, pady=3)
 
 coordenadas_pill_bboxes = {}
+_hover_pieza_idx = None
+
+def _indice_pieza_en_xy(ex, ey):
+    filas = max(1, matriz_filas)
+    cols = max(1, matriz_cols)
+    total_piezas = matriz_total
+    w = canvas_fixture.winfo_width()
+    h = canvas_fixture.winfo_height()
+    if w < 50: w = 480
+    if h < 50: h = 210
+    gap_x = max(2, min(8, int(30 / cols)))
+    gap_y = max(2, min(8, int(30 / filas)))
+    pad_x = max(4, min(10, int(40 / cols)))
+    pad_y = max(4, min(8, int(30 / filas)))
+    card_w = max(12.0, (w - 2 * pad_x - (cols - 1) * gap_x) / cols)
+    card_h = max(12.0, (h - 2 * pad_y - (filas - 1) * gap_y) / filas)
+    patron = config_actual.get("patron_pintado", "vertical")
+    for i in range(total_piezas):
+        if patron == "vertical":
+            c = i // filas
+            r_idx = i % filas
+            r = r_idx if (c % 2 == 0) else (filas - 1 - r_idx)
+        else:
+            r = i // cols
+            c = i % cols
+        x1 = pad_x + c * (card_w + gap_x)
+        y1 = pad_y + r * (card_h + gap_y)
+        if x1 <= ex <= (x1 + card_w) and y1 <= ey <= (y1 + card_h):
+            return i
+    return None
+
+def _al_mover_mouse_fixture(event):
+    global _hover_pieza_idx
+    try:
+        idx = _indice_pieza_en_xy(event.x, event.y)
+        canvas_fixture.configure(cursor="hand2" if (idx is not None and estado_manual) else "")
+        if idx != _hover_pieza_idx:
+            _hover_pieza_idx = idx
+            dibujar_fixture_moderno(forzar_completo=False)
+    except Exception:
+        pass
+
+def _al_salir_mouse_fixture(event):
+    global _hover_pieza_idx
+    if _hover_pieza_idx is not None:
+        _hover_pieza_idx = None
+        try:
+            canvas_fixture.configure(cursor="")
+            dibujar_fixture_moderno(forzar_completo=False)
+        except Exception:
+            pass
 
 def al_click_en_pieza_fixture(event):
     """Permite hacer clic sobre una tarjeta para enviar su coordenada al PLC únicamente en MODO MANUAL"""
     try:
-        filas = max(1, matriz_filas)
-        cols = max(1, matriz_cols)
-        total_piezas = matriz_total
-        w = canvas_fixture.winfo_width()
-        h = canvas_fixture.winfo_height()
-        if w < 50: w = 480
-        if h < 50: h = 210
-        gap_x = max(2, min(8, int(30 / cols)))
-        gap_y = max(2, min(8, int(30 / filas)))
-        pad_x = max(4, min(10, int(40 / cols)))
-        pad_y = max(4, min(8, int(30 / filas)))
-        card_w = max(12.0, (w - 2 * pad_x - (cols - 1) * gap_x) / cols)
-        card_h = max(12.0, (h - 2 * pad_y - (filas - 1) * gap_y) / filas)
-        
-        patron = config_actual.get("patron_pintado", "vertical")
-        for i in range(total_piezas):
-            if patron == "vertical":
-                c = i // filas
-                r_idx = i % filas
-                r = r_idx if (c % 2 == 0) else (filas - 1 - r_idx)
-            else:
-                r = i // cols
-                c = i % cols
-            x1 = pad_x + c * (card_w + gap_x)
-            y1 = pad_y + r * (card_h + gap_y)
-            x2 = x1 + card_w
-            y2 = y1 + card_h
-            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
-                if not estado_manual:
-                    lbl_estado.configure(
-                        text="⚠️ MODO MANUAL REQUERIDO: Active el 'MODO MANUAL' para enviar piezas al PLC.",
-                        text_color=COLOR_WARN
-                    )
-                    return
-                probar_enviar_pieza_especifica(i)
-                break
+        idx = _indice_pieza_en_xy(event.x, event.y)
+        if idx is not None:
+            if not estado_manual:
+                lbl_estado.configure(
+                    text="⚠️ MODO MANUAL REQUERIDO: Active el 'MODO MANUAL' para enviar piezas al PLC.",
+                    text_color=COLOR_WARN
+                )
+                return
+            probar_enviar_pieza_especifica(idx)
     except Exception:
         pass
 
 canvas_fixture.bind("<Button-1>", al_click_en_pieza_fixture)
+canvas_fixture.bind("<Motion>", _al_mover_mouse_fixture)
+canvas_fixture.bind("<Leave>", _al_salir_mouse_fixture)
 
 # Estado dinámico de las piezas de la matriz (inicializado en 0 procesadas)
 fixture_piezas_estado = ["pendiente"] * matriz_total
@@ -5436,6 +5611,9 @@ fixture_piezas_estado = ["pendiente"] * matriz_total
 def actualizar_kpis_fixture():
     global total_piezas_sesion_acum
     ok_cnt = sum(1 for s in fixture_piezas_estado if s == "ok")
+    
+    if 'animar_progreso_ciclo' in globals():
+        animar_progreso_ciclo(ok_cnt / float(max(1, matriz_total)))
     
     # Requisito: El total de piezas acumula el "Número de Piezas por Jig" cada vez que termina un ciclo de jig
     if 'lbl_kpi_total' in globals() and lbl_kpi_total:
@@ -5470,6 +5648,66 @@ ctk.CTkLabel(
 
 _fixture_layout_key = None
 _fixture_card_items = {}
+_cache_cards_pil = {}
+_pulso_pieza_fase = 0
+_pulso_pieza_timer = None
+
+def _obtener_card_bg_pil(w_px, h_px, rad_px, fill_hex, border_hex, bw_px=1):
+    """
+    Genera y almacena en caché una tarjeta rectangular redondeada con anti-aliasing 2x (LANCZOS)
+    y sombra suave mediante PIL, eliminando las esquinas deformes de Tkinter create_polygon.
+    """
+    w_i = max(16, int(round(w_px)))
+    h_i = max(16, int(round(h_px)))
+    r_i = max(3, min(14, int(round(rad_px))))
+    key = (w_i, h_i, r_i, fill_hex, border_hex, bw_px)
+    if key in _cache_cards_pil:
+        return _cache_cards_pil[key]
+    try:
+        scale = 2
+        sw, sh = w_i * scale, h_i * scale
+        sr = r_i * scale
+        sbw = max(1, int(bw_px * scale))
+        img = Image.new("RGBA", (sw, sh), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(img)
+        # Sombra sutil inferior para profundidad moderna
+        draw.rounded_rectangle(
+            (scale, scale * 2, sw - scale - 1, sh - 1),
+            radius=sr,
+            fill=(15, 23, 42, 18)
+        )
+        # Cuerpo principal con borde nítido anti-aliased
+        draw.rounded_rectangle(
+            (scale, scale, sw - scale - 1, sh - scale * 2 - 1),
+            radius=sr,
+            fill=fill_hex,
+            outline=border_hex,
+            width=sbw
+        )
+        img_final = img.resize((w_i, h_i), RESAMPLE_FILTER)
+        tk_img = ImageTk.PhotoImage(img_final)
+        if len(_cache_cards_pil) > 120:
+            _cache_cards_pil.clear()
+        _cache_cards_pil[key] = tk_img
+        return tk_img
+    except Exception:
+        return None
+
+def _animar_pulso_pieza_activa():
+    global _pulso_pieza_fase, _pulso_pieza_timer
+    _pulso_pieza_timer = None
+    try:
+        if _vista_activa_hmi == "operador" and ('estado_pintar' in globals() and estado_pintar):
+            _pulso_pieza_fase = (_pulso_pieza_fase + 1) % 2
+            dibujar_fixture_moderno(forzar_completo=False)
+            _pulso_pieza_timer = ventana.after(380, _animar_pulso_pieza_activa)
+        else:
+            if _pulso_pieza_fase != 0:
+                _pulso_pieza_fase = 0
+                dibujar_fixture_moderno(forzar_completo=False)
+            _pulso_pieza_timer = ventana.after(600, _animar_pulso_pieza_activa)
+    except Exception:
+        pass
 
 def dibujar_fixture_moderno(forzar_completo=False):
     global _fixture_layout_key, _fixture_card_items
@@ -5497,8 +5735,31 @@ def dibujar_fixture_moderno(forzar_completo=False):
     card_w = max(12.0, (w - 2 * pad_x - (cols - 1) * gap_x) / cols)
     card_h = max(12.0, (h - 2 * pad_y - (filas - 1) * gap_y) / filas)
     d_icon = max(14, int(min(card_w * 0.38, card_h * 0.64)))
+    rad = max(3, min(11, int(card_h * 0.18)))
 
-    # Fast-path en Windows: si la geometría y receta son idénticas, actualizar solo tarjetas cuyo estado cambió (0 parpadeo)
+    def _colores_tarjeta(idx_p, st_p, en_pint, pulso_f, hov_idx):
+        es_hover = (idx_p == hov_idx)
+        if st_p == "activa":
+            if en_pint and pulso_f == 1:
+                c_bg, c_border, c_txt, bw = "#DBEAFE", "#1D4ED8", "#1E3A8A", 3
+            else:
+                c_bg, c_border, c_txt, bw = ("#E0F2FE" if es_hover else "#EFF6FF"), "#2563EB", "#1E3A8A", 2
+            c_pbg, c_pbd, c_ptxt = "#DBEAFE", "#93C5FD", "#1E40AF"
+            dfill, dout = "#3B82F6", "#1D4ED8"
+        elif st_p in ("ok", "nok"):
+            c_bg, c_border, c_txt, bw = ("#DCFCE7" if es_hover else "#F0FDF4"), "#10B981", "#065F46", 2
+            c_pbg, c_pbd, c_ptxt = "#DCFCE7", "#86EFAC", "#065F46"
+            dfill, dout = "#10B981", "#047857"
+        else:
+            if es_hover:
+                c_bg, c_border, c_txt, bw = "#F8FAFC", "#3B82F6", "#1E3A8A", 2
+            else:
+                c_bg, c_border, c_txt, bw = "#FFFFFF", "#CBD5E1", "#334155", 1
+            c_pbg, c_pbd, c_ptxt = "#F1F5F9", "#CBD5E1", "#475569"
+            dfill, dout = "#E2E8F0", "#94A3B8"
+        return c_bg, c_border, c_txt, bw, c_pbg, c_pbd, c_ptxt, dfill, dout
+
+    # Fast-path en Windows: si la geometría y receta son idénticas, actualizar solo tarjetas cuyo estado o hover cambió (0 parpadeo)
     if not forzar_completo and _fixture_layout_key == layout_key and len(_fixture_card_items) == total_piezas:
         recibida_plc = ultimo_plc_rx_ok if 'ultimo_plc_rx_ok' in globals() else True
         n_p = int(config_actual.get("pasadas_tampo", 2))
@@ -5507,25 +5768,21 @@ def dibujar_fixture_moderno(forzar_completo=False):
         
         for i in range(total_piezas):
             st = fixture_piezas_estado[i] if i < len(fixture_piezas_estado) else "pendiente"
-            state_sig = (st, recibida_plc if st == "activa" else None, pasada_act if (st == "activa" and en_pintado) else None, en_pintado if st == "activa" else None)
+            es_hov = (i == _hover_pieza_idx)
+            pulso_act = _pulso_pieza_fase if (st == "activa" and en_pintado) else 0
+            state_sig = (st, recibida_plc if st == "activa" else None, pasada_act if (st == "activa" and en_pintado) else None, en_pintado if st == "activa" else None, es_hov, pulso_act)
             info = _fixture_card_items.get(i)
             if not info or info.get("state_sig") == state_sig:
                 continue
             info["state_sig"] = state_sig
-            if st == "activa":
-                c_bg, c_border, c_txt, bw = "#EFF6FF", "#2563EB", "#1E3A8A", 2
-                c_pbg, c_pbd, c_ptxt = "#DBEAFE", "#93C5FD", "#1E40AF"
-                dfill, dout = "#3B82F6", "#1D4ED8"
-            elif st in ("ok", "nok"):
-                c_bg, c_border, c_txt, bw = "#F0FDF4", "#10B981", "#065F46", 2
-                c_pbg, c_pbd, c_ptxt = "#DCFCE7", "#86EFAC", "#065F46"
-                dfill, dout = "#10B981", "#047857"
+            c_bg, c_border, c_txt, bw, c_pbg, c_pbd, c_ptxt, dfill, dout = _colores_tarjeta(i, st, en_pintado, _pulso_pieza_fase, _hover_pieza_idx)
+            
+            if info.get("bg_is_img"):
+                tk_card_bg = _obtener_card_bg_pil(card_w, card_h, rad, c_bg, c_border, bw)
+                if tk_card_bg:
+                    canvas_fixture.itemconfigure(info["bg"], image=tk_card_bg)
             else:
-                c_bg, c_border, c_txt, bw = "#FFFFFF", "#CBD5E1", "#334155", 1
-                c_pbg, c_pbd, c_ptxt = "#F1F5F9", "#CBD5E1", "#475569"
-                dfill, dout = "#E2E8F0", "#94A3B8"
-                
-            canvas_fixture.itemconfigure(info["bg"], fill=c_bg, outline=c_border, width=bw)
+                canvas_fixture.itemconfigure(info["bg"], fill=c_bg, outline=c_border, width=bw)
             canvas_fixture.itemconfigure(info["num"], fill=c_txt)
             if info.get("pill_rect"):
                 canvas_fixture.itemconfigure(info["pill_rect"], fill=c_pbg, outline=c_pbd)
@@ -5556,7 +5813,6 @@ def dibujar_fixture_moderno(forzar_completo=False):
     _fixture_layout_key = layout_key
     _fixture_card_items = {}
     
-    rad = max(2, min(10, int(card_h * 0.18)))
     recibida_plc = ultimo_plc_rx_ok if 'ultimo_plc_rx_ok' in globals() else True
     n_p = int(config_actual.get("pasadas_tampo", 2))
     en_pintado = bool('estado_pintar' in globals() and estado_pintar)
@@ -5578,28 +5834,15 @@ def dibujar_fixture_moderno(forzar_completo=False):
         st = fixture_piezas_estado[i] if i < len(fixture_piezas_estado) else "pendiente"
         cx, cy = matriz_coordenadas[i] if i < len(matriz_coordenadas) else (0.0, 0.0)
         
-        if st == "activa":
-            c_bg, c_border, c_txt, bw = "#EFF6FF", "#2563EB", "#1E3A8A", 2
-        elif st in ("ok", "nok"):
-            c_bg, c_border, c_txt, bw = "#F0FDF4", "#10B981", "#065F46", 2
+        c_bg, c_border, c_txt, bw, c_pbg, c_pbd, c_ptxt, dfill, dout = _colores_tarjeta(i, st, en_pintado, _pulso_pieza_fase, _hover_pieza_idx)
+        
+        tk_card_bg = _obtener_card_bg_pil(card_w, card_h, rad, c_bg, c_border, bw)
+        if tk_card_bg:
+            bg_id = canvas_fixture.create_image((x1 + x2) / 2.0, (y1 + y2) / 2.0, image=tk_card_bg)
+            bg_is_img = True
         else:
-            c_bg, c_border, c_txt, bw = "#FFFFFF", "#CBD5E1", "#334155", 1
-            
-        pts = [
-            x1 + rad, y1,
-            x2 - rad, y1,
-            x2, y1,
-            x2, y1 + rad,
-            x2, y2 - rad,
-            x2, y2,
-            x2 - rad, y2,
-            x1 + rad, y2,
-            x1, y2,
-            x1, y2 - rad,
-            x1, y1 + rad,
-            x1, y1
-        ]
-        bg_id = canvas_fixture.create_polygon(pts, smooth=True, fill=c_bg, outline=c_border, width=bw)
+            bg_id = canvas_fixture.create_rectangle(x1, y1, x2, y2, fill=c_bg, outline=c_border, width=bw)
+            bg_is_img = False
         
         es_visible_coord = coordenadas_visibles_map.get(i, coords_visibles_todas)
         num_x = x1 + card_w * 0.26
@@ -5608,47 +5851,40 @@ def dibujar_fixture_moderno(forzar_completo=False):
         
         if es_visible_coord:
             num_y = y1 + card_h * 0.25
-            font_sz = max(9, min(13, int(card_h * 0.24)))
+            font_sz = max(8, min(11, int(card_h * 0.20)))
             num_id = canvas_fixture.create_text(
                 num_x, num_y,
                 text=f"{i+1:02d}",
-                font=(FONT_MAIN, font_sz, "bold"),
+                font=(FONT_MAIN, -int(round(font_sz * 1.25)), "bold"),
                 fill=c_txt
             )
             
             coord_x = num_x
-            coord_y = y1 + card_h * 0.69
+            coord_y = y1 + card_h * 0.68
             
             pill_w = card_w * 0.44
-            pill_h = card_h * 0.40
+            pill_h = card_h * 0.39
             px1 = coord_x - pill_w / 2
             py1 = coord_y - pill_h / 2
             px2 = coord_x + pill_w / 2
             py2 = coord_y + pill_h / 2
-            
-            if st == "activa":
-                c_pbg, c_pbd, c_ptxt = "#DBEAFE", "#93C5FD", "#1E40AF"
-            elif st in ("ok", "nok"):
-                c_pbg, c_pbd, c_ptxt = "#DCFCE7", "#86EFAC", "#065F46"
-            else:
-                c_pbg, c_pbd, c_ptxt = "#F1F5F9", "#CBD5E1", "#475569"
                 
             pill_rect_id = canvas_fixture.create_rectangle(px1, py1, px2, py2, fill=c_pbg, outline=c_pbd, width=1)
-            font_sz_c = max(7, min(9, int(card_h * 0.16)))
+            font_sz_c = max(7, min(9, int(card_h * 0.14)))
             pill_txt_id = canvas_fixture.create_text(
                 coord_x, coord_y,
                 text=f"X:{cx:.1f}\nY:{cy:.1f}",
-                font=(FONT_MONO, font_sz_c, "bold"),
+                font=(FONT_MONO, -int(round(font_sz_c * 1.15)), "bold"),
                 fill=c_ptxt,
                 justify="center"
             )
         else:
             num_y = y1 + card_h * 0.50
-            font_sz = max(11, min(16, int(card_h * 0.34)))
+            font_sz = max(10, min(14, int(card_h * 0.28)))
             num_id = canvas_fixture.create_text(
                 num_x, num_y,
                 text=f"{i+1:02d}",
-                font=(FONT_MAIN, font_sz, "bold"),
+                font=(FONT_MAIN, -int(round(font_sz * 1.25)), "bold"),
                 fill=c_txt
             )
         
@@ -5663,13 +5899,6 @@ def dibujar_fixture_moderno(forzar_completo=False):
             img_id = canvas_fixture.create_image(icon_x, icon_y, image=img_circ)
         else:
             ir = d_icon / 2.0
-            if st == "activa":
-                dfill, dout = "#3B82F6", "#1D4ED8"
-            elif st in ("ok", "nok"):
-                dfill, dout = "#10B981", "#047857"
-            else:
-                dfill, dout = "#E2E8F0", "#94A3B8"
-            
             drop_oval_id = canvas_fixture.create_oval(
                 icon_x - ir * 0.65, icon_y - ir * 0.3,
                 icon_x + ir * 0.65, icon_y + ir * 0.85,
@@ -5683,18 +5912,21 @@ def dibujar_fixture_moderno(forzar_completo=False):
             )
             
         badge_x = x2 - 8
-        badge_y = y1 + 9
+        badge_y = y1 + 10
         if st == "activa":
             tag_txt = f"▶ P{pasada_act}/2" if (n_p == 2 and en_pintado) else ("▶ RX✓" if recibida_plc else "▶ TX")
-            badge_id = canvas_fixture.create_text(badge_x - 6, badge_y, text=tag_txt, font=(FONT_MAIN, 8, "bold"), fill="#2563EB")
+            badge_id = canvas_fixture.create_text(badge_x - 6, badge_y, text=tag_txt, font=(FONT_MAIN, -10, "bold"), fill="#2563EB")
         elif st in ("ok", "nok"):
-            badge_id = canvas_fixture.create_text(badge_x, badge_y, text="✓", font=(FONT_MAIN, 9, "bold"), fill=COLOR_OK)
+            badge_id = canvas_fixture.create_text(badge_x, badge_y, text="✓", font=(FONT_MAIN, -11, "bold"), fill=COLOR_OK)
         else:
-            badge_id = canvas_fixture.create_text(badge_x, badge_y, text="", font=(FONT_MAIN, 8, "bold"), fill=COLOR_OK)
+            badge_id = canvas_fixture.create_text(badge_x, badge_y, text="", font=(FONT_MAIN, -10, "bold"), fill=COLOR_OK)
             
-        state_sig = (st, recibida_plc if st == "activa" else None, pasada_act if (st == "activa" and en_pintado) else None, en_pintado if st == "activa" else None)
+        es_hov = (i == _hover_pieza_idx)
+        pulso_act = _pulso_pieza_fase if (st == "activa" and en_pintado) else 0
+        state_sig = (st, recibida_plc if st == "activa" else None, pasada_act if (st == "activa" and en_pintado) else None, en_pintado if st == "activa" else None, es_hov, pulso_act)
         _fixture_card_items[i] = {
             "bg": bg_id,
+            "bg_is_img": bg_is_img,
             "num": num_id,
             "pill_rect": pill_rect_id,
             "pill_txt": pill_txt_id,
@@ -5759,11 +5991,50 @@ lbl_no_listo= crear_pill_ctk(f_diag_b, 4, 0, "ESTADO: NO LISTO", cspan=3)
 # COLUMNA 3 (DERECHA): OPERACIÓN & MOVIMIENTO MANUAL JOG (UNIFICADO)
 # ==============================================================================
 col_3 = ctk.CTkFrame(body_grid, fg_color="transparent")
-col_3.grid(row=0, column=2, sticky="nsew", padx=6)
+col_3.grid(row=0, column=2, sticky="nsew", padx=5)
+col_3.pack_propagate(False)
 
-# Estado y control de pestaña retráctil para Operación & JOG
+# Estado y control de pestaña retráctil para Operación & JOG con interpolación fluida 60 FPS
 jog_pestana_retraida = False
 btn_toggle_jog = None
+_anim_jog_id = None
+
+def _animar_mandos_control(h_ini_start, h_ini_end, h_stop_start, h_stop_end, f_ini_end, f_stop_end):
+    global _anim_jog_id
+    if _anim_jog_id is not None:
+        try:
+            ventana.after_cancel(_anim_jog_id)
+        except Exception:
+            pass
+        _anim_jog_id = None
+    pasos = 8
+    def _step_m(i=1):
+        global _anim_jog_id
+        t = i / float(pasos)
+        ease = 1.0 - ((1.0 - t) ** 3)
+        h_i = int(round(h_ini_start + (h_ini_end - h_ini_start) * ease))
+        h_s = int(round(h_stop_start + (h_stop_end - h_stop_start) * ease))
+        try:
+            if 'btn_inicio' in globals():
+                btn_inicio.configure(height=h_i)
+            if 'btn_reset' in globals():
+                btn_reset.configure(height=h_i)
+            if 'btn_stop' in globals():
+                btn_stop.configure(height=h_s)
+            if i == pasos:
+                if 'btn_inicio' in globals():
+                    btn_inicio.configure(font=(FONT_MAIN, f_ini_end, "bold"))
+                if 'btn_reset' in globals():
+                    btn_reset.configure(font=(FONT_MAIN, f_ini_end, "bold"))
+                if 'btn_stop' in globals():
+                    btn_stop.configure(font=(FONT_MAIN, f_stop_end, "bold"))
+        except Exception:
+            pass
+        if i < pasos:
+            _anim_jog_id = ventana.after(14, lambda: _step_m(i + 1))
+        else:
+            _anim_jog_id = None
+    _step_m(1)
 
 def alternar_pestana_jog(event=None):
     global jog_pestana_retraida, btn_toggle_jog
@@ -5784,7 +6055,7 @@ def alternar_pestana_jog(event=None):
         if hasattr(card_jog, '_header_frame'):
             card_jog._header_frame.configure(fg_color="#E2E8F0")
 
-        # Escalar los mandos de control (INICIO, RESET, PARO) para llenar el espacio restante
+        # Escalar los mandos de control (INICIO, RESET, PARO) con interpolación fluida
         try:
             if 'card_mandos_der' in globals():
                 card_mandos_der.pack_configure(fill="both", expand=True, pady=(6, 0))
@@ -5794,13 +6065,11 @@ def alternar_pestana_jog(event=None):
                 f_ir_row.pack_configure(fill="both", expand=True, pady=(0, 10))
             if 'btn_inicio' in globals():
                 btn_inicio.pack_configure(side="left", fill="both", expand=True, padx=(0, 5))
-                btn_inicio.configure(font=(FONT_MAIN, 20, "bold"), height=90)
             if 'btn_reset' in globals():
                 btn_reset.pack_configure(side="right", fill="both", expand=True, padx=(5, 0))
-                btn_reset.configure(font=(FONT_MAIN, 20, "bold"), height=90)
             if 'btn_stop' in globals():
                 btn_stop.pack_configure(fill="both", expand=True, pady=(4, 0))
-                btn_stop.configure(font=(FONT_MAIN, 24, "bold"), height=110)
+            _animar_mandos_control(42, 90, 46, 110, 20, 24)
         except Exception as err:
             print(f"Error escalando mandos: {err}")
 
@@ -5820,7 +6089,7 @@ def alternar_pestana_jog(event=None):
         if hasattr(card_jog, '_header_frame'):
             card_jog._header_frame.configure(fg_color="#F1F5F9")
 
-        # Ajustar mandos de control a tamaño compacto para dar prioridad al JOG
+        # Ajustar mandos de control a tamaño compacto con interpolación fluida
         try:
             if 'card_mandos_der' in globals():
                 card_mandos_der.pack_configure(fill="x", expand=False, pady=(4, 0))
@@ -5830,13 +6099,11 @@ def alternar_pestana_jog(event=None):
                 f_ir_row.pack_configure(fill="x", expand=False, pady=(0, 4))
             if 'btn_inicio' in globals():
                 btn_inicio.pack_configure(side="left", fill="x", expand=True, padx=(0, 3))
-                btn_inicio.configure(font=(FONT_MAIN, 13, "bold"), height=42)
             if 'btn_reset' in globals():
                 btn_reset.pack_configure(side="right", fill="x", expand=True, padx=(3, 0))
-                btn_reset.configure(font=(FONT_MAIN, 13, "bold"), height=42)
             if 'btn_stop' in globals():
                 btn_stop.pack_configure(fill="x", expand=False, pady=(2, 0))
-                btn_stop.configure(font=(FONT_MAIN, 14, "bold"), height=46)
+            _animar_mandos_control(90, 42, 110, 46, 13, 14)
         except Exception as err:
             print(f"Error contrayendo mandos: {err}")
 
@@ -6298,7 +6565,8 @@ btn_stop.pack(fill="x", pady=(2, 0))
 # ------------------------------------------------------------------------------
 # 5.3. PANTALLA 3: MÓDULO ADMINISTRADOR (ESTILO 1:1 INTERFAZ_KOSTAL)
 # ------------------------------------------------------------------------------
-frame_admin = ctk.CTkFrame(ventana, fg_color=BG_MAIN, corner_radius=0)
+frame_admin = ctk.CTkFrame(contenedor_vistas, fg_color=BG_MAIN, corner_radius=0)
+frame_admin.grid(row=0, column=0, sticky="nsew")
 
 # Header Superior de Admin (Blanco limpio con Título, Subtítulo, Logo Baluarte y Reloj - Imágenes 1-4)
 hdr_admin = ctk.CTkFrame(frame_admin, fg_color="#FFFFFF", height=60, corner_radius=0, border_width=1, border_color=BORDER_CARD)
@@ -6409,11 +6677,13 @@ MODULOS_INFO = {
 def cambiar_modulo_admin(nombre):
     for n, f in admin_vistas.items():
         if n == nombre:
-            f.pack(fill="both", expand=True, padx=16, pady=16)
+            try:
+                f.tkraise()
+            except Exception:
+                pass
             if n in admin_nav_btns:
                 admin_nav_btns[n].configure(fg_color="#004F9F", text_color="white")
         else:
-            f.pack_forget()
             if n in admin_nav_btns:
                 admin_nav_btns[n].configure(fg_color="transparent", text_color="#CBD5E1")
                 
@@ -6527,24 +6797,30 @@ btn_adm_logout = ctk.CTkButton(
 )
 btn_adm_logout.pack(fill="x")
 
-# Contenedor Derecho del Contenido
+# Contenedor Derecho del Contenido (Pre-renderizado por capas con grid para transición instantánea)
 f_adm_content = ctk.CTkFrame(f_adm_body, fg_color=BG_MAIN, corner_radius=0)
 f_adm_content.pack(side="left", fill="both", expand=True)
+f_adm_content.rowconfigure(0, weight=1)
+f_adm_content.columnconfigure(0, weight=1)
 
 # Vista 1: Excel (Estadísticas)
 view_excel = ctk.CTkScrollableFrame(f_adm_content, fg_color="transparent")
+view_excel.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
 admin_vistas["excel"] = view_excel
 
 # Vista 2: Recetas & Matriz (Programas)
 view_recetas = ctk.CTkScrollableFrame(f_adm_content, fg_color="transparent")
+view_recetas.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
 admin_vistas["recetas"] = view_recetas
 
 # Vista 3: Usuarios
 view_usuarios = ctk.CTkScrollableFrame(f_adm_content, fg_color="transparent")
+view_usuarios.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
 admin_vistas["usuarios"] = view_usuarios
 
 # Vista 4: Ajustes
 view_ajustes = ctk.CTkScrollableFrame(f_adm_content, fg_color="transparent")
+view_ajustes.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
 admin_vistas["ajustes"] = view_ajustes
 
 # --- VISTA 1: EXPORTACIÓN A EXCEL (ALTO CONTRASTE) ---
@@ -7742,6 +8018,8 @@ cambiar_modulo_admin("excel")
 # ==============================================================================
 status_bar = ctk.CTkFrame(ventana, fg_color=COLOR_KOSTAL_DARK, height=32, corner_radius=0)
 status_bar.pack(fill="x", side="bottom")
+contenedor_vistas.pack(fill="both", expand=True, side="top")
+frame_splash.tkraise()
 
 lbl_estado = ctk.CTkLabel(
     status_bar,
@@ -7834,5 +8112,28 @@ resetear_variables_inicio()
 fijar_pasadas_tampo(config_actual.get("pasadas_tampo", 2))
 actualizar_botones_paso_preset()
 actualizar_boton_patron()
+_animar_pulso_pieza_activa()
 
+# Pre-calcular toda la geometría en segundo plano mientras la ventana es invisible (alpha=0.0)
+# para evitar cualquier salto, re-escalado progresivo o parpadeo al arrancar en Windows.
+try:
+    aplicar_pantalla_completa_windows()
+    ventana.update_idletasks()
+except Exception:
+    pass
+
+def _fade_in_ventana_principal(paso=1, total_pasos=10):
+    try:
+        t = paso / float(total_pasos)
+        ease = 1.0 - ((1.0 - t) ** 3)
+        ventana.attributes("-alpha", min(1.0, ease))
+        if paso < total_pasos:
+            ventana.after(16, lambda: _fade_in_ventana_principal(paso + 1, total_pasos))
+    except Exception:
+        try:
+            ventana.attributes("-alpha", 1.0)
+        except Exception:
+            pass
+
+ventana.after(30, _fade_in_ventana_principal)
 ventana.mainloop()
