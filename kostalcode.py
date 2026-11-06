@@ -75,24 +75,26 @@ try:
         if self._state not in ("disabled", tk.DISABLED):
             ahora = time.perf_counter()
             ultimo = getattr(self, "_ultimo_toque_ts", 0.0)
-            if ahora - ultimo < 0.07:
+            if ahora - ultimo < 0.18:
                 return
             self._ultimo_toque_ts = ahora
-            # Micro-interacción visual instantánea al presionar
             try:
-                self._on_enter()
-                self.after(85, self._on_leave)
+                self._on_leave()
             except Exception:
                 pass
             # Al tocar cualquier botón de acción, ocultar el teclado automáticamente si estaba abierto
             if _estado_teclado_visible:
                 ocultar_teclado_nativo()
             if self._command is not None:
-                # Ejecutar el comando diferido 5ms después para respuesta táctil instantánea en Windows
-                try:
-                    self.after(5, self._command)
-                except Exception:
-                    self._command()
+                self._command()
+
+    def _on_touch_press_btn(self, event=None):
+        if self._state not in ("disabled", tk.DISABLED):
+            self._mouse_inside = True
+            try:
+                self._on_enter()
+            except Exception:
+                pass
 
     _orig_btn_draw = ctk.CTkButton._draw
     def _patched_btn_draw(self, no_color_updates=False):
@@ -101,7 +103,7 @@ try:
             if w is not None and not getattr(w, "_touch_press_bound", False):
                 w._touch_press_bound = True
                 try:
-                    w.bind("<Button-1>", lambda e, s=self: s._on_release(e), add="+")
+                    w.bind("<ButtonPress-1>", lambda e, s=self: _on_touch_press_btn(s, e), add="+")
                 except Exception:
                     pass
 
@@ -3468,30 +3470,24 @@ def centrar_ventana(win, ancho, alto):
             pass
 
 def _animar_apertura_modal(win, ancho, alto):
-    """Abre un diálogo modal con animación DWM a 60 FPS (Fade-In + deslizamiento suave cubic ease-out)"""
+    """Abre un diálogo modal centrado con transición DWM por hardware (Fade-In limpio sin saltos de geometría)"""
     try:
         win.attributes("-alpha", 0.0)
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
-        x = max(0, int((sw - ancho) / 2))
-        y_final = max(0, int((sh - alto) / 2))
-        y_inicio = y_final + 18
-        win.geometry(f"{ancho}x{alto}+{x}+{y_inicio}")
-        pasos = 9
+        centrar_ventana(win, ancho, alto)
+        win.update_idletasks()
+        pasos = 6
         def _step(i=1):
             if not win.winfo_exists():
                 return
             t = i / float(pasos)
-            ease = 1.0 - ((1.0 - t) ** 3)
-            y_cur = int(round(y_inicio + (y_final - y_inicio) * ease))
+            ease = 1.0 - ((1.0 - t) ** 2)
             try:
-                win.geometry(f"{ancho}x{alto}+{x}+{y_cur}")
                 win.attributes("-alpha", min(1.0, ease))
             except Exception:
                 pass
             if i < pasos:
                 win.after(14, lambda: _step(i + 1))
-        win.after(10, _step)
+        win.after(8, _step)
     except Exception:
         centrar_ventana(win, ancho, alto)
         try:
@@ -3738,8 +3734,7 @@ _anim_vista_id = None
 def animar_cambio_vista(frame_destino, nombre_vista, card_centrada=None):
     """
     Cambia instantáneamente la vista pre-renderizada en contenedor_vistas mediante tkraise()
-    (sin recalcular geometría ni redimensionar widgets en vivo) y aplica una micro-animación
-    a 60 FPS (cubic ease-out) para una transición moderna y fluida en Windows.
+    en un solo paso atómico (sin recalcular ni mover widgets en vivo, 0% parpadeo o glitch).
     """
     global _vista_activa_hmi, _anim_vista_id
     _vista_activa_hmi = nombre_vista
@@ -3751,31 +3746,14 @@ def animar_cambio_vista(frame_destino, nombre_vista, card_centrada=None):
         _anim_vista_id = None
 
     try:
+        if card_centrada is not None:
+            card_centrada.place_configure(rely=0.5)
         frame_destino.tkraise()
     except Exception:
         pass
 
-    if card_centrada is not None:
-        pasos = 10
-        y_ini = 0.535
-        y_fin = 0.50
-        def _step_card(i=1):
-            global _anim_vista_id
-            t = i / float(pasos)
-            ease = 1.0 - ((1.0 - t) ** 3)
-            ry = y_ini + (y_fin - y_ini) * ease
-            try:
-                card_centrada.place_configure(rely=ry)
-            except Exception:
-                pass
-            if i < pasos:
-                _anim_vista_id = ventana.after(14, lambda: _step_card(i + 1))
-            else:
-                _anim_vista_id = None
-        _step_card(1)
-    else:
-        if nombre_vista == "operador" and 'dibujar_fixture_moderno' in globals():
-            ventana.after(10, lambda: dibujar_fixture_moderno(forzar_completo=True))
+    if nombre_vista == "operador" and 'dibujar_fixture_moderno' in globals():
+        ventana.after(10, lambda: dibujar_fixture_moderno(forzar_completo=True))
 
 def iniciar_sesion(usuario_seleccionado, rol="OPERADOR"):
     """
@@ -5994,55 +5972,24 @@ col_3 = ctk.CTkFrame(body_grid, fg_color="transparent")
 col_3.grid(row=0, column=2, sticky="nsew", padx=5)
 col_3.pack_propagate(False)
 
-# Estado y control de pestaña retráctil para Operación & JOG con interpolación fluida 60 FPS
+# Estado y control de pestaña retráctil para Operación & JOG (Cambio limpio sin jitter de redimensionado)
 jog_pestana_retraida = False
 btn_toggle_jog = None
-_anim_jog_id = None
-
-def _animar_mandos_control(h_ini_start, h_ini_end, h_stop_start, h_stop_end, f_ini_end, f_stop_end):
-    global _anim_jog_id
-    if _anim_jog_id is not None:
-        try:
-            ventana.after_cancel(_anim_jog_id)
-        except Exception:
-            pass
-        _anim_jog_id = None
-    pasos = 8
-    def _step_m(i=1):
-        global _anim_jog_id
-        t = i / float(pasos)
-        ease = 1.0 - ((1.0 - t) ** 3)
-        h_i = int(round(h_ini_start + (h_ini_end - h_ini_start) * ease))
-        h_s = int(round(h_stop_start + (h_stop_end - h_stop_start) * ease))
-        try:
-            if 'btn_inicio' in globals():
-                btn_inicio.configure(height=h_i)
-            if 'btn_reset' in globals():
-                btn_reset.configure(height=h_i)
-            if 'btn_stop' in globals():
-                btn_stop.configure(height=h_s)
-            if i == pasos:
-                if 'btn_inicio' in globals():
-                    btn_inicio.configure(font=(FONT_MAIN, f_ini_end, "bold"))
-                if 'btn_reset' in globals():
-                    btn_reset.configure(font=(FONT_MAIN, f_ini_end, "bold"))
-                if 'btn_stop' in globals():
-                    btn_stop.configure(font=(FONT_MAIN, f_stop_end, "bold"))
-        except Exception:
-            pass
-        if i < pasos:
-            _anim_jog_id = ventana.after(14, lambda: _step_m(i + 1))
-        else:
-            _anim_jog_id = None
-    _step_m(1)
+_ultimo_toggle_jog_ts = 0.0
 
 def alternar_pestana_jog(event=None):
-    global jog_pestana_retraida, btn_toggle_jog
+    global jog_pestana_retraida, btn_toggle_jog, _ultimo_toggle_jog_ts
+    ahora_ts = time.perf_counter()
+    if ahora_ts - _ultimo_toggle_jog_ts < 0.18:
+        return
+    _ultimo_toggle_jog_ts = ahora_ts
     jog_pestana_retraida = not jog_pestana_retraida
+
     if jog_pestana_retraida:
-        # Retraer toda la sección JOG en la pestaña superior
+        # Retraer toda la sección JOG dejando únicamente el encabezado compacto de 38px
         f_jog_b.pack_forget()
-        card_jog.pack_configure(fill="x", expand=False)
+        card_jog.pack_configure(fill="x", expand=False, pady=(0, 6))
+        card_jog.configure(height=38)
         if btn_toggle_jog:
             btn_toggle_jog.configure(
                 text="▼ Desplegar" if idioma_actual == "ES" else "▼ Expand",
@@ -6055,28 +6002,50 @@ def alternar_pestana_jog(event=None):
         if hasattr(card_jog, '_header_frame'):
             card_jog._header_frame.configure(fg_color="#E2E8F0")
 
-        # Escalar los mandos de control (INICIO, RESET, PARO) con interpolación fluida
+        # Expandir los mandos de control (INICIO, RESET, PARO) en un solo paso atómico sin glitches
         try:
             if 'card_mandos_der' in globals():
-                card_mandos_der.pack_configure(fill="both", expand=True, pady=(6, 0))
+                card_mandos_der.pack_configure(fill="both", expand=True, pady=(2, 0))
             if 'f_mandos_der_b' in globals():
                 f_mandos_der_b.pack_configure(fill="both", expand=True, padx=12, pady=12)
             if 'f_ir_row' in globals():
                 f_ir_row.pack_configure(fill="both", expand=True, pady=(0, 10))
             if 'btn_inicio' in globals():
+                btn_inicio.configure(font=(FONT_MAIN, 20, "bold"), height=90)
                 btn_inicio.pack_configure(side="left", fill="both", expand=True, padx=(0, 5))
             if 'btn_reset' in globals():
+                btn_reset.configure(font=(FONT_MAIN, 20, "bold"), height=90)
                 btn_reset.pack_configure(side="right", fill="both", expand=True, padx=(5, 0))
             if 'btn_stop' in globals():
+                btn_stop.configure(font=(FONT_MAIN, 24, "bold"), height=110)
                 btn_stop.pack_configure(fill="both", expand=True, pady=(4, 0))
-            _animar_mandos_control(42, 90, 46, 110, 20, 24)
         except Exception as err:
             print(f"Error escalando mandos: {err}")
 
     else:
-        # Desplegar toda la sección JOG hacia abajo de forma amplia
-        card_jog.pack_configure(fill="both", expand=True)
-        f_jog_b.pack(fill="both", expand=True, padx=10, pady=6)
+        # Contraer primero mandos de control a tamaño compacto inferior
+        try:
+            if 'card_mandos_der' in globals():
+                card_mandos_der.pack_configure(fill="x", expand=False, pady=(4, 0))
+            if 'f_mandos_der_b' in globals():
+                f_mandos_der_b.pack_configure(fill="x", expand=False, padx=8, pady=6)
+            if 'f_ir_row' in globals():
+                f_ir_row.pack_configure(fill="x", expand=False, pady=(0, 4))
+            if 'btn_inicio' in globals():
+                btn_inicio.configure(font=(FONT_MAIN, 13, "bold"), height=40)
+                btn_inicio.pack_configure(side="left", fill="x", expand=True, padx=(0, 3))
+            if 'btn_reset' in globals():
+                btn_reset.configure(font=(FONT_MAIN, 13, "bold"), height=40)
+                btn_reset.pack_configure(side="right", fill="x", expand=True, padx=(3, 0))
+            if 'btn_stop' in globals():
+                btn_stop.configure(font=(FONT_MAIN, 14, "bold"), height=44)
+                btn_stop.pack_configure(fill="x", expand=False, pady=(2, 0))
+        except Exception as err:
+            print(f"Error contrayendo mandos: {err}")
+
+        # Desplegar toda la sección JOG hacia abajo
+        card_jog.pack_configure(fill="both", expand=True, pady=(0, 6))
+        f_jog_b.pack(fill="both", expand=True, padx=10, pady=4)
         if btn_toggle_jog:
             btn_toggle_jog.configure(
                 text="▲ Plegar" if idioma_actual == "ES" else "▲ Fold",
@@ -6088,24 +6057,6 @@ def alternar_pestana_jog(event=None):
             card_jog._header_title.configure(text=DICCIONARIO_IDIOMAS[idioma_actual]["op_jog"])
         if hasattr(card_jog, '_header_frame'):
             card_jog._header_frame.configure(fg_color="#F1F5F9")
-
-        # Ajustar mandos de control a tamaño compacto con interpolación fluida
-        try:
-            if 'card_mandos_der' in globals():
-                card_mandos_der.pack_configure(fill="x", expand=False, pady=(4, 0))
-            if 'f_mandos_der_b' in globals():
-                f_mandos_der_b.pack_configure(fill="x", expand=False, padx=8, pady=6)
-            if 'f_ir_row' in globals():
-                f_ir_row.pack_configure(fill="x", expand=False, pady=(0, 4))
-            if 'btn_inicio' in globals():
-                btn_inicio.pack_configure(side="left", fill="x", expand=True, padx=(0, 3))
-            if 'btn_reset' in globals():
-                btn_reset.pack_configure(side="right", fill="x", expand=True, padx=(3, 0))
-            if 'btn_stop' in globals():
-                btn_stop.pack_configure(fill="x", expand=False, pady=(2, 0))
-            _animar_mandos_control(90, 42, 110, 46, 13, 14)
-        except Exception as err:
-            print(f"Error contrayendo mandos: {err}")
 
 def _widget_btn_toggle_jog(parent_hdr):
     global btn_toggle_jog
@@ -6303,7 +6254,7 @@ btn_step_minus.pack(side="right", padx=(0, 1))
 
 # Fila de Presets Rápidos de Paso (0.5, 1.0, 2.0, 5.0, 10.0)
 f_step_presets = ctk.CTkFrame(f_jog_b, fg_color="transparent")
-f_step_presets.pack(fill="x", pady=(2, 5))
+f_step_presets.pack(fill="x", pady=(2, 3))
 
 _btns_paso_presets.clear()
 for p_preset in [0.5, 1.0, 2.0, 5.0, 10.0]:
@@ -6311,7 +6262,8 @@ for p_preset in [0.5, 1.0, 2.0, 5.0, 10.0]:
         f_step_presets,
         text=f"{p_preset:g}",
         font=(FONT_MAIN, 10, "bold"),
-        height=28,
+        width=38,
+        height=26,
         corner_radius=4,
         border_width=1,
         border_color=BORDER_LIGHT,
@@ -6325,7 +6277,7 @@ for p_preset in [0.5, 1.0, 2.0, 5.0, 10.0]:
 
 # Cruzeta y Coordenadas Agrandadas para pantalla táctil
 f_jog_ctrl = ctk.CTkFrame(f_jog_b, fg_color="transparent")
-f_jog_ctrl.pack(fill="x", pady=4)
+f_jog_ctrl.pack(fill="x", pady=2)
 
 f_coord_box = ctk.CTkFrame(f_jog_ctrl, fg_color=BG_INPUT, corner_radius=8, border_width=1, border_color=BORDER_LIGHT)
 f_coord_box.pack(side="left", padx=(0, 6), pady=2)
@@ -6350,20 +6302,20 @@ def btn_pad(parent, txt, cmd):
     return ctk.CTkButton(
         parent,
         text=txt,
-        font=(FONT_MAIN, 20, "bold"),
+        font=(FONT_MAIN, 18, "bold"),
         fg_color="#FFFFFF",
         hover_color="#F1F5F9",
         text_color="#1E293B",
         border_width=1,
         border_color=BORDER_LIGHT,
         corner_radius=8,
-        width=64,
-        height=52,
+        width=60,
+        height=44,
         command=cmd
     )
 
 btn_y_mas = btn_pad(f_pad, "▲", lambda: mover_cruzeta('Y', 1))
-btn_y_mas.grid(row=0, column=1, pady=2)
+btn_y_mas.grid(row=0, column=1, pady=1)
 
 btn_x_menos = btn_pad(f_pad, "◄", lambda: mover_cruzeta('X', -1))
 btn_x_menos.grid(row=1, column=0, padx=2)
@@ -6374,27 +6326,27 @@ btn_x_mas = btn_pad(f_pad, "►", lambda: mover_cruzeta('X', 1))
 btn_x_mas.grid(row=1, column=2, padx=2)
 
 btn_y_menos = btn_pad(f_pad, "▼", lambda: mover_cruzeta('Y', -1))
-btn_y_menos.grid(row=2, column=1, pady=2)
+btn_y_menos.grid(row=2, column=1, pady=1)
 
 # Botones de Referencia y Activación Manual de Tampo
 f_refs = ctk.CTkFrame(f_jog_b, fg_color="transparent")
-f_refs.pack(fill="x", pady=(4, 0))
+f_refs.pack(fill="x", pady=(2, 0))
 
-# Fila 1: Home y Activar Tampo (SIEMPRE VISIBLES Y MÁS GRANDES)
+# Fila 1: Home y Activar Tampo (SIEMPRE VISIBLES)
 f_main_jog_actions = ctk.CTkFrame(f_refs, fg_color="transparent")
-f_main_jog_actions.pack(fill="x", pady=(2, 4))
+f_main_jog_actions.pack(fill="x", pady=(1, 3))
 
 btn_ir_home = ctk.CTkButton(
     f_main_jog_actions,
     text="🏠 Home",
-    font=(FONT_MAIN, 13, "bold"),
+    font=(FONT_MAIN, 12, "bold"),
     fg_color="#FFFFFF",
     hover_color="#F1F5F9",
     text_color="#1E293B",
     border_width=1,
     border_color=BORDER_LIGHT,
     corner_radius=8,
-    height=46,
+    height=38,
     command=ejecutar_home_general
 )
 btn_ir_home.pack(side="left", expand=True, fill="x", padx=2)
@@ -6402,14 +6354,14 @@ btn_ir_home.pack(side="left", expand=True, fill="x", padx=2)
 btn_activar_tampo = ctk.CTkButton(
     f_main_jog_actions,
     text="🏷️ Activar Tampo",
-    font=(FONT_MAIN, 13, "bold"),
+    font=(FONT_MAIN, 12, "bold"),
     fg_color="#FFFFFF",
     hover_color="#F1F5F9",
     text_color=COLOR_KOSTAL_ACCENT,
     border_width=1,
     border_color=BORDER_LIGHT,
     corner_radius=8,
-    height=46,
+    height=38,
     command=activar_tampo_manual
 )
 btn_activar_tampo.pack(side="left", expand=True, fill="x", padx=2)
@@ -6421,7 +6373,7 @@ f_calib_desplegable = ctk.CTkFrame(f_refs, fg_color="#FEF3C7", corner_radius=8, 
 # f_calib_desplegable permanece oculto hasta pulsar desplegar
 
 f_calib_banner = ctk.CTkFrame(f_calib_desplegable, fg_color="transparent")
-f_calib_banner.pack(fill="x", padx=8, pady=(6, 2))
+f_calib_banner.pack(fill="x", padx=8, pady=(4, 1))
 ctk.CTkLabel(
     f_calib_banner,
     text="⚠️ CALIBRACIÓN Y FIJACIÓN DE ORIGEN",
@@ -6430,7 +6382,7 @@ ctk.CTkLabel(
 ).pack(side="left")
 
 f_calib_row = ctk.CTkFrame(f_calib_desplegable, fg_color="transparent")
-f_calib_row.pack(fill="x", padx=4, pady=(2, 6))
+f_calib_row.pack(fill="x", padx=4, pady=(1, 4))
 
 btn_set_cero = ctk.CTkButton(
     f_calib_row,
@@ -6442,7 +6394,7 @@ btn_set_cero = ctk.CTkButton(
     border_width=1,
     border_color="#86EFAC",
     corner_radius=6,
-    height=42,
+    height=34,
     command=guardar_posicion_como_cero
 )
 btn_set_cero.pack(side="left", expand=True, fill="x", padx=2)
@@ -6457,7 +6409,7 @@ btn_set_home = ctk.CTkButton(
     border_width=1,
     border_color="#FDE68A",
     corner_radius=6,
-    height=42,
+    height=34,
     command=guardar_posicion_como_home
 )
 btn_set_home.pack(side="left", expand=True, fill="x", padx=2)
@@ -6466,10 +6418,11 @@ def alternar_desplegable_calibracion():
     global _calib_jog_desplegada
     _calib_jog_desplegada = not _calib_jog_desplegada
     if _calib_jog_desplegada:
-        f_calib_desplegable.pack(fill="x", pady=(2, 4))
+        f_calib_desplegable.pack(fill="x", pady=(2, 2))
         btn_toggle_calib.configure(text="▲ Ocultar Calibración", fg_color="#FEF3C7", text_color="#92400E")
     else:
         f_calib_desplegable.pack_forget()
+        f_refs.configure(height=1)
         btn_toggle_calib.configure(text="▼ Desplegar Calibración (Set 0 / Set Home)", fg_color="#F8FAFC", text_color=COLOR_KOSTAL_NAVY)
 
 def abrir_desplegable_calibracion():
@@ -6487,10 +6440,10 @@ btn_toggle_calib = ctk.CTkButton(
     border_width=1,
     border_color=BORDER_LIGHT,
     corner_radius=6,
-    height=34,
+    height=30,
     command=alternar_desplegable_calibracion
 )
-btn_toggle_calib.pack(fill="x", pady=(2, 2))
+btn_toggle_calib.pack(fill="x", pady=(1, 2))
 
 # DISPLAY NO EDITABLE DE CERO GUARDADO (INFERIOR DE CRUZETA)
 f_cero_readonly = ctk.CTkFrame(f_jog_b, fg_color=BG_INPUT, corner_radius=8, border_width=1, border_color=BORDER_CARD)
