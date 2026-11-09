@@ -344,136 +344,136 @@ def guardar_configuracion_disco(cfg):
 # ==============================================================================
 DICCIONARIO_IDIOMAS = {
     "ES": {
-        "panel_admin": "🛠️ Panel Admin",
-        "cerrar_sesion": "⏻ Cerrar Sesión",
-        "pantalla": "⛶ Pantalla",
-        "salir_pantalla": "❐ Ventana",
-        "minimizar": "🗕 Minimizar",
+        "panel_admin": "Panel Admin",
+        "cerrar_sesion": "Cerrar Sesión",
+        "pantalla": "Pantalla Completa",
+        "salir_pantalla": "Modo Ventana",
+        "minimizar": "Minimizar",
         "info_proceso": "INFORMACIÓN DE PROCESO",
         "receta_activa": "Receta / Jig Activo:",
-        "ver_jigs": "🔍 Ver Jigs",
+        "ver_jigs": "Ver Jigs",
         "pieza": "Pieza:",
         "modelo": "Modelo:",
         "matriz_fixture": "Matriz Fixture:",
         "dist_cc": "Dist. C-C:",
         "piezas_realizadas": "Piezas Realizadas",
-        "cero_listo": "✓ CERO LISTO",
-        "cero_pendiente": "⚠️ SET 0 PENDIENTE (CALIBRAR PUNTO 1)",
+        "cero_listo": "CERO CALIBRADO",
+        "cero_pendiente": "SET 0 PENDIENTE (CALIBRAR PUNTO 1)",
         "tiempo_sesion": "Tiempo Sesión:",
         "total": "TOTAL",
         "ok": "OK",
-        "reg_fin_hora": "⏱️ Registrar Fin de Hora",
+        "reg_fin_hora": "Registrar Fin de Hora",
         "ctrl_pintado": "CONTROL PRINCIPAL DE PINTADO",
-        "btn_pintar_off": "🎨 INICIO DE PINTADO [OFF]",
-        "btn_pintar_on": "🎨 PINTANDO ACTIVO [ON]",
-        "btn_pintar_bloq": "🔒 PINTADO BLOQUEADO (SET 0 PENDIENTE)",
+        "btn_pintar_off": "INICIO DE PINTADO [OFF]",
+        "btn_pintar_on": "PINTANDO ACTIVO [ON]",
+        "btn_pintar_bloq": "PINTADO BLOQUEADO (SET 0 PENDIENTE)",
         "estado_fixture": "ESTADO DEL FIXTURE",
-        "recetario_admin": "🛠️ Recetario Admin",
-        "patron_vert": "⬇️ Vertical",
-        "patron_horiz": "➡️ Horizontal",
+        "recetario_admin": "Recetario Admin",
+        "patron_vert": "Patrón: Vertical",
+        "patron_horiz": "Patrón: Horizontal",
         "coords_btn": "Coords",
-        "probar_mov": "⚡ Probar Movimiento",
+        "probar_mov": "Probar Movimiento",
         "ley_pend": "● Pendiente",
         "ley_proc": "● En Proceso (Activa)",
         "ley_ok": "● Completada OK",
         "ley_nok": "● Fallo / NOK",
-        "ley_click": "💡 Modo Manual: Clic en pieza envía coord.",
-        "diag_plc": "DIAGNÓSTICO & SEÑALES DEL PLC WAGO",
-        "op_jog": "OPERACIÓN & JOG",
+        "ley_click": "Modo Manual: Clic en cavidad envía coordenada",
+        "diag_plc": "DIAGNÓSTICO Y SEÑALES DEL PLC WAGO",
+        "op_jog": "OPERACIÓN Y JOG",
         "plegar": "▲ Plegar",
         "desplegar": "▼ Desplegar",
-        "modo_auto": "⚙ MODO: AUTO",
-        "modo_manual": "⚙ MODO: MANUAL",
+        "modo_auto": "MODO: AUTO",
+        "modo_manual": "MODO: MANUAL",
         "velocidad": "Velocidad:",
         "ciclos_tampo": "Ciclos Tampo:",
         "pasada_1": "1 Pasada",
         "pasada_2": "2 Pasadas",
-        "jog_manual": "🕹️ JOG MANUAL",
+        "jog_manual": "JOG MANUAL",
         "paso_jog": "Paso JOG:",
-        "home": "🏠 Home",
-        "activar_tampo": "🏷️ Activar Tampo",
+        "home": "Ir a Home",
+        "activar_tampo": "Activar Tampo",
         "calibracion_show": "▼ Desplegar Calibración (Set 0 / Set Home)",
         "calibracion_hide": "▲ Ocultar Calibración (Set 0 / Set Home)",
-        "set_0": "↩ Set 0",
-        "set_home": "⚙ Set Home",
-        "cero_reg": "🔒 CERO REGISTRADO:",
+        "set_0": "Set 0",
+        "set_home": "Set Home",
+        "cero_reg": "CERO REGISTRADO:",
         "mandos_ctrl": "MANDOS DE CONTROL",
-        "inicio": "▶ INICIO",
-        "reset": "↻ RESET",
-        "paro": "🛑 PARO",
-        "paro_activo": "🛑 PARO ACTIVO (LIBERAR)",
+        "inicio": "INICIO",
+        "reset": "RESET",
+        "paro": "PARO",
+        "paro_activo": "PARO ACTIVO (LIBERAR)",
         "sistema_listo": "SISTEMA LISTO PARA OPERAR",
         "en_proceso": "CICLO DE PINTADO EN PROCESO",
         "modo_man_act": "MODO MANUAL / JOG ACTIVO",
-        "paro_emergencia": "🛑 PARO ACTIVADO — PRESIONE RESET Y LUEGO INICIO",
-        "req_reset": "⚠️ PARO LIBERADO — PRESIONE [↻ RESET] PARA REARMAR",
-        "req_inicio": "⚠️ RESET COMPLETADO — PRESIONE [▶ INICIO] PARA HABILITAR",
+        "paro_emergencia": "PARO ACTIVADO — PRESIONE RESET Y LUEGO INICIO",
+        "req_reset": "PARO LIBERADO — PRESIONE [RESET] PARA REARMAR",
+        "req_inicio": "RESET COMPLETADO — PRESIONE [INICIO] PARA HABILITAR",
     },
     "EN": {
-        "panel_admin": "🛠️ Admin Panel",
-        "cerrar_sesion": "⏻ Sign Out",
-        "pantalla": "⛶ Fullscreen",
-        "salir_pantalla": "❐ Windowed",
-        "minimizar": "🗕 Minimize",
+        "panel_admin": "Admin Panel",
+        "cerrar_sesion": "Sign Out",
+        "pantalla": "Fullscreen",
+        "salir_pantalla": "Windowed",
+        "minimizar": "Minimize",
         "info_proceso": "PROCESS INFORMATION",
         "receta_activa": "Active Recipe / Jig:",
-        "ver_jigs": "🔍 View Jigs",
+        "ver_jigs": "View Jigs",
         "pieza": "Part:",
         "modelo": "Model:",
         "matriz_fixture": "Fixture Matrix:",
         "dist_cc": "C-C Dist.:",
         "piezas_realizadas": "Completed Parts",
-        "cero_listo": "✓ ZERO READY",
-        "cero_pendiente": "⚠️ SET 0 PENDING (CALIBRATE POINT 1)",
+        "cero_listo": "ZERO CALIBRATED",
+        "cero_pendiente": "SET 0 PENDING (CALIBRATE POINT 1)",
         "tiempo_sesion": "Session Time:",
         "total": "TOTAL",
         "ok": "OK",
-        "reg_fin_hora": "⏱️ Log Hourly Output",
+        "reg_fin_hora": "Log Hourly Output",
         "ctrl_pintado": "MAIN PRINTING CONTROL",
-        "btn_pintar_off": "🎨 START PRINTING [OFF]",
-        "btn_pintar_on": "🎨 PRINTING ACTIVE [ON]",
-        "btn_pintar_bloq": "🔒 PRINTING LOCKED (SET 0 PENDING)",
+        "btn_pintar_off": "START PRINTING [OFF]",
+        "btn_pintar_on": "PRINTING ACTIVE [ON]",
+        "btn_pintar_bloq": "PRINTING LOCKED (SET 0 PENDING)",
         "estado_fixture": "FIXTURE STATUS",
-        "recetario_admin": "🛠️ Recipe Admin",
-        "patron_vert": "⬇️ Vertical",
-        "patron_horiz": "➡️ Horizontal",
+        "recetario_admin": "Recipe Admin",
+        "patron_vert": "Pattern: Vertical",
+        "patron_horiz": "Pattern: Horizontal",
         "coords_btn": "Coords",
-        "probar_mov": "⚡ Test Movement",
+        "probar_mov": "Test Movement",
         "ley_pend": "● Pending",
         "ley_proc": "● In Progress (Active)",
         "ley_ok": "● Completed OK",
         "ley_nok": "● Fault / NOK",
-        "ley_click": "💡 Manual Mode: Click cavity to send coord.",
+        "ley_click": "Manual Mode: Click cavity to send coordinate",
         "diag_plc": "WAGO PLC DIAGNOSTICS & SIGNALS",
         "op_jog": "OPERATION & JOG",
         "plegar": "▲ Collapse",
         "desplegar": "▼ Expand",
-        "modo_auto": "⚙ MODE: AUTO",
-        "modo_manual": "⚙ MODE: MANUAL",
+        "modo_auto": "MODE: AUTO",
+        "modo_manual": "MODE: MANUAL",
         "velocidad": "Speed:",
         "ciclos_tampo": "Pad Cycles:",
         "pasada_1": "1 Pass",
         "pasada_2": "2 Passes",
-        "jog_manual": "🕹️ MANUAL JOG",
+        "jog_manual": "MANUAL JOG",
         "paso_jog": "JOG Step:",
-        "home": "🏠 Home",
-        "activar_tampo": "🏷️ Trigger Pad",
+        "home": "Go Home",
+        "activar_tampo": "Trigger Pad",
         "calibracion_show": "▼ Show Calibration (Set 0 / Set Home)",
         "calibracion_hide": "▲ Hide Calibration (Set 0 / Set Home)",
-        "set_0": "↩ Set 0",
-        "set_home": "⚙ Set Home",
-        "cero_reg": "🔒 SAVED ZERO:",
+        "set_0": "Set 0",
+        "set_home": "Set Home",
+        "cero_reg": "SAVED ZERO:",
         "mandos_ctrl": "CONTROL COMMANDS",
-        "inicio": "▶ START",
-        "reset": "↻ RESET",
-        "paro": "🛑 STOP",
-        "paro_activo": "🛑 STOP ACTIVE (RELEASE)",
+        "inicio": "START",
+        "reset": "RESET",
+        "paro": "STOP",
+        "paro_activo": "STOP ACTIVE (RELEASE)",
         "sistema_listo": "SYSTEM READY TO OPERATE",
         "en_proceso": "PRINTING CYCLE IN PROGRESS",
         "modo_man_act": "MANUAL / JOG MODE ACTIVE",
-        "paro_emergencia": "🛑 STOP ACTIVE — PRESS RESET THEN START",
-        "req_reset": "⚠️ STOP RELEASED — PRESS [↻ RESET] TO RE-ARM",
-        "req_inicio": "⚠️ RESET DONE — PRESS [▶ START] TO ENABLE",
+        "paro_emergencia": "STOP ACTIVE — PRESS RESET THEN START",
+        "req_reset": "STOP RELEASED — PRESS [RESET] TO RE-ARM",
+        "req_inicio": "RESET DONE — PRESS [START] TO ENABLE",
     },
 }
 
@@ -1227,16 +1227,16 @@ class InWindowOverlayLayer(QWidget):
         lay.setSpacing(12)
 
         col_map = {
-            "info": ("ℹ️", COLOR_BRAND_PRIMARY),
-            "ok": ("✅", COLOR_OK),
-            "warn": ("⚠️", COLOR_WARN),
-            "error": ("🛑", COLOR_ERR),
-            "confirm": ("❓", COLOR_BRAND_PRIMARY),
+            "info": ("[INFO]", COLOR_BRAND_PRIMARY),
+            "ok": ("[OK]", COLOR_OK),
+            "warn": ("[AVISO]", COLOR_WARN),
+            "error": ("[ERROR]", COLOR_ERR),
+            "confirm": ("[CONFIRMAR]", COLOR_BRAND_PRIMARY),
         }
-        ico, color_hex = col_map.get(tipo, ("ℹ️", COLOR_BRAND_PRIMARY))
+        ico, color_hex = col_map.get(tipo, ("[INFO]", COLOR_BRAND_PRIMARY))
 
         lbl_tit = QLabel(f"{ico}  {titulo}")
-        lbl_tit.setStyleSheet(f"color: {color_hex}; font-size: 17px; font-weight: 800; background: transparent;")
+        lbl_tit.setStyleSheet(f"color: {color_hex}; font-size: 16px; font-weight: 800; background: transparent;")
         lbl_tit.setWordWrap(True)
         lay.addWidget(lbl_tit)
 
@@ -1295,8 +1295,8 @@ class InWindowOverlayLayer(QWidget):
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(12)
 
-        lbl_tit = QLabel("🔍 Selección de Jig / Número de Parte")
-        lbl_tit.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 18px; font-weight: 800;")
+        lbl_tit = QLabel("SELECCIÓN DE JIG / NÚMERO DE PARTE")
+        lbl_tit.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 17px; font-weight: 800;")
         lay.addWidget(lbl_tit)
 
         lbl_sub = QLabel("Seleccione el Jig o receta de producción que desea cargar en la estación:")
@@ -1355,10 +1355,10 @@ class InWindowOverlayLayer(QWidget):
             cx = float(rec.get("cero_x", 0.0))
             cy = float(rec.get("cero_y", 0.0))
             if rec.get("set_0_listo", True):
-                lbl_p_set0.setText(f"✓ Cero Predeterminado Listo (X:{cx:.1f}, Y:{cy:.1f})")
+                lbl_p_set0.setText(f"Cero Predeterminado Calibrado (X:{cx:.1f}, Y:{cy:.1f})")
                 lbl_p_set0.setStyleSheet("color: #059669; font-size: 12px; font-weight: 700;")
             else:
-                lbl_p_set0.setText("⚠️ Set 0 Pendiente de Calibrar")
+                lbl_p_set0.setText("Set 0 Pendiente de Calibrar")
                 lbl_p_set0.setStyleSheet("color: #D97706; font-size: 12px; font-weight: 700;")
 
             ruta = buscar_recurso(rec.get("imagen", ""))
@@ -1380,7 +1380,7 @@ class InWindowOverlayLayer(QWidget):
         btn_cancel.clicked.connect(self.close_overlay)
         btn_row.addWidget(btn_cancel)
 
-        btn_load = QPushButton("✓ Cargar Jig Seleccionado")
+        btn_load = QPushButton("Cargar Jig Seleccionado")
         btn_load.setMinimumHeight(40)
         btn_load.setStyleSheet(
             f"background-color: {COLOR_BRAND_PRIMARY}; color: #FFFFFF; font-weight: 800; border-radius: 8px;"
@@ -1402,8 +1402,8 @@ class InWindowOverlayLayer(QWidget):
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(10)
 
-        lbl_tit = QLabel("⏱️ Corte y Registro de Fin de Hora")
-        lbl_tit.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 18px; font-weight: 800;")
+        lbl_tit = QLabel("CORTE Y REGISTRO DE FIN DE HORA")
+        lbl_tit.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 17px; font-weight: 800;")
         lay.addWidget(lbl_tit)
 
         lbl_rec = QLabel(f"Receta Activa: {receta_nom}")
@@ -1423,7 +1423,7 @@ class InWindowOverlayLayer(QWidget):
         flay.addWidget(inp_total, 0, 1, 1, 3)
 
         flay.addWidget(QLabel("Piezas NOK (Scrap):"), 1, 0)
-        btn_minus = QPushButton("−")
+        btn_minus = QPushButton("-")
         btn_minus.setFixedSize(36, 34)
         inp_nok = QLineEdit(str(max(0, int(nok_actual))))
         inp_nok.setAlignment(Qt.AlignCenter)
@@ -1451,7 +1451,7 @@ class InWindowOverlayLayer(QWidget):
                 n = 0
             ok_v = max(0, t - n)
             cal = (ok_v / t * 100.0) if t > 0 else 100.0
-            lbl_calc.setText(f"✓ Piezas OK: {ok_v}   |   Calidad del Corte: {cal:.1f}%")
+            lbl_calc.setText(f"Piezas OK: {ok_v}   |   Calidad del Corte: {cal:.1f}%")
 
         def _adj_nok(delta):
             try:
@@ -1467,7 +1467,7 @@ class InWindowOverlayLayer(QWidget):
         inp_nok.textChanged.connect(lambda _: _recalc())
         _recalc()
 
-        btn_kb = QPushButton("⌨️ Abrir Teclado en Pantalla")
+        btn_kb = QPushButton("Abrir Teclado en Pantalla")
         btn_kb.setMinimumHeight(32)
         btn_kb.clicked.connect(abrir_teclado_tactil_windows)
         lay.addWidget(btn_kb)
@@ -1479,7 +1479,7 @@ class InWindowOverlayLayer(QWidget):
         btn_cancel.clicked.connect(self.close_overlay)
         btn_row.addWidget(btn_cancel)
 
-        btn_save = QPushButton("💾 Guardar Corte de Hora")
+        btn_save = QPushButton("Guardar Corte de Hora")
         btn_save.setMinimumHeight(40)
         btn_save.setStyleSheet(f"background-color: {COLOR_OK}; color: #FFFFFF; font-weight: 800; border-radius: 8px;")
 
@@ -1506,7 +1506,7 @@ class InWindowOverlayLayer(QWidget):
         lay.setContentsMargins(20, 18, 20, 18)
         lay.setSpacing(10)
 
-        lbl_tit = QLabel("🔢 Paso JOG Manual (0.1 — 200.0 mm)")
+        lbl_tit = QLabel("PASO JOG MANUAL (0.1 — 200.0 mm)")
         lbl_tit.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 15px; font-weight: 800;")
         lay.addWidget(lbl_tit)
 
@@ -1532,12 +1532,12 @@ class InWindowOverlayLayer(QWidget):
             ("7", 0, 0), ("8", 0, 1), ("9", 0, 2),
             ("4", 1, 0), ("5", 1, 1), ("6", 1, 2),
             ("1", 2, 0), ("2", 2, 1), ("3", 2, 2),
-            (".", 3, 0), ("0", 3, 1), ("⌫", 3, 2),
+            (".", 3, 0), ("0", 3, 1), ("DEL", 3, 2),
         ]
 
         def _press(k):
             cur = disp.text()
-            if k == "⌫":
+            if k == "DEL":
                 disp.setText(cur[:-1])
             elif k == ".":
                 if "." not in cur:
@@ -1562,7 +1562,7 @@ class InWindowOverlayLayer(QWidget):
         btn_c.clicked.connect(self.close_overlay)
         act_row.addWidget(btn_c)
 
-        btn_ok = QPushButton("✓ Aplicar")
+        btn_ok = QPushButton("Aplicar")
         btn_ok.setMinimumHeight(38)
         btn_ok.setStyleSheet(f"background-color: {COLOR_OK}; color: white; font-weight: 800; border-radius: 8px;")
 
@@ -1890,7 +1890,7 @@ class KostalHmiWindow(QMainWindow):
         sblay.setContentsMargins(0, 0, 0, 0)
         sblay.setSpacing(12)
 
-        btn_retry = QPushButton("🔄 Reintentar Conexión al PLC")
+        btn_retry = QPushButton("Reintentar Conexión al PLC")
         btn_retry.setMinimumHeight(42)
         btn_retry.setStyleSheet(
             f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-weight: 800; border-radius: 8px;"
@@ -1898,7 +1898,7 @@ class KostalHmiWindow(QMainWindow):
         btn_retry.clicked.connect(self._splash_retry_plc)
         sblay.addWidget(btn_retry)
 
-        btn_sim = QPushButton("⚡ Iniciar en Modo Simulación")
+        btn_sim = QPushButton("Iniciar en Modo Simulación")
         btn_sim.setMinimumHeight(42)
         btn_sim.setStyleSheet(
             f"background-color: {COLOR_WARN}; color: white; font-weight: 800; border-radius: 8px;"
@@ -1942,17 +1942,17 @@ class KostalHmiWindow(QMainWindow):
 
         # Barra superior de ventana en Login
         top_bar = QHBoxLayout()
-        lbl_est = QLabel(f"🏭 Estación: {self.config.get('estacion_nombre', 'EST-KOSTAL-04')}")
+        lbl_est = QLabel(f"ESTACIÓN: {self.config.get('estacion_nombre', 'EST-KOSTAL-04')}")
         lbl_est.setStyleSheet("font-size: 13px; font-weight: 800; color: #334155;")
         top_bar.addWidget(lbl_est)
         top_bar.addStretch(1)
 
-        btn_fs = QPushButton("⛶ Pantalla Completa")
+        btn_fs = QPushButton("Pantalla Completa")
         btn_fs.setStyleSheet("background-color: #1E293B; color: white; padding: 6px 12px;")
         btn_fs.clicked.connect(self.alternar_pantalla_completa)
         top_bar.addWidget(btn_fs)
 
-        btn_min = QPushButton("🗕 Minimizar")
+        btn_min = QPushButton("Minimizar")
         btn_min.setStyleSheet("background-color: #475569; color: white; padding: 6px 12px;")
         btn_min.clicked.connect(self.showMinimized)
         top_bar.addWidget(btn_min)
@@ -1991,6 +1991,8 @@ class KostalHmiWindow(QMainWindow):
 
         clay.addWidget(QLabel("Contraseña / PIN de Acceso:"))
         pass_row = QHBoxLayout()
+        pass_row.setSpacing(6)
+        self._login_pass_visible = False
         self.inp_login_pass = QLineEdit()
         self.inp_login_pass.setEchoMode(QLineEdit.Password)
         self.inp_login_pass.setPlaceholderText("Ingrese contraseña...")
@@ -1998,23 +2000,23 @@ class KostalHmiWindow(QMainWindow):
         self.inp_login_pass.returnPressed.connect(self._attempt_login)
         pass_row.addWidget(self.inp_login_pass, 1)
 
-        self.btn_login_eye = QPushButton("👁")
-        self.btn_login_eye.setFixedSize(46, 40)
+        self.btn_login_eye = QPushButton("VER")
+        self.btn_login_eye.setFixedSize(72, 40)
         self.btn_login_eye.setCursor(Qt.PointingHandCursor)
-        self.btn_login_eye.setToolTip("Mostrar / Ocultar contraseña")
+        self.btn_login_eye.setToolTip("Mostrar u ocultar contraseña")
         self.btn_login_eye.setStyleSheet(
-            "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 16px; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
+            "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 11px; font-weight: 800; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
             "QPushButton:hover { background-color: #CBD5E1; }"
         )
         self.btn_login_eye.clicked.connect(self._toggle_login_password_visibility)
         pass_row.addWidget(self.btn_login_eye)
 
-        btn_kb = QPushButton("⌨️")
-        btn_kb.setFixedSize(46, 40)
+        btn_kb = QPushButton("TECLADO")
+        btn_kb.setFixedSize(78, 40)
         btn_kb.setCursor(Qt.PointingHandCursor)
         btn_kb.setToolTip("Abrir teclado en pantalla")
         btn_kb.setStyleSheet(
-            "QPushButton { background-color: #E0F2FE; color: #0369A1; font-size: 16px; border: 1px solid #BAE6FD; border-radius: 7px; padding: 0px; }"
+            "QPushButton { background-color: #E0F2FE; color: #0369A1; font-size: 11px; font-weight: 800; border: 1px solid #BAE6FD; border-radius: 7px; padding: 0px; }"
             "QPushButton:hover { background-color: #BAE6FD; }"
         )
         btn_kb.clicked.connect(abrir_teclado_tactil_windows)
@@ -2026,7 +2028,7 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_login_err.setAlignment(Qt.AlignCenter)
         clay.addWidget(self.lbl_login_err)
 
-        btn_enter = QPushButton("🔓 INICIAR SESIÓN EN ESTACIÓN")
+        btn_enter = QPushButton("INICIAR SESIÓN EN ESTACIÓN")
         btn_enter.setMinimumHeight(46)
         btn_enter.setStyleSheet(
             f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 14px; font-weight: 800; border-radius: 8px;"
@@ -2039,19 +2041,23 @@ class KostalHmiWindow(QMainWindow):
         return page
 
     def _toggle_login_password_visibility(self):
-        if self.inp_login_pass.echoMode() == QLineEdit.EchoMode.Password:
-            self.inp_login_pass.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.btn_login_eye.setText("🙈")
+        self._login_pass_visible = not getattr(self, "_login_pass_visible", False)
+        if self._login_pass_visible:
+            self.inp_login_pass.setEchoMode(QLineEdit.Normal)
+            self.btn_login_eye.setText("OCULTAR")
             self.btn_login_eye.setStyleSheet(
-                "QPushButton { background-color: #BAE6FD; color: #0369A1; font-size: 16px; border: 2px solid #0284C7; border-radius: 7px; padding: 0px; }"
+                "QPushButton { background-color: #0284C7; color: #FFFFFF; font-size: 11px; font-weight: 800; border: 1px solid #0369A1; border-radius: 7px; padding: 0px; }"
             )
         else:
-            self.inp_login_pass.setEchoMode(QLineEdit.EchoMode.Password)
-            self.btn_login_eye.setText("👁")
+            self.inp_login_pass.setEchoMode(QLineEdit.Password)
+            self.btn_login_eye.setText("VER")
             self.btn_login_eye.setStyleSheet(
-                "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 16px; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
+                "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 11px; font-weight: 800; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
                 "QPushButton:hover { background-color: #CBD5E1; }"
             )
+        self.inp_login_pass.style().unpolish(self.inp_login_pass)
+        self.inp_login_pass.style().polish(self.inp_login_pass)
+        self.inp_login_pass.update()
         self.inp_login_pass.setFocus()
 
     def _refresh_login_users_combo(self):
@@ -2068,14 +2074,15 @@ class KostalHmiWindow(QMainWindow):
         usuarios = self.config.get("usuarios", [])
         encontrado = next((u for u in usuarios if u.get("user") == user_id and u.get("pass") == pwd), None)
         if not encontrado:
-            self.lbl_login_err.setText("⚠️ Contraseña incorrecta. Verifique sus credenciales.")
+            self.lbl_login_err.setText("Contraseña incorrecta. Verifique sus credenciales.")
             return
         self.lbl_login_err.setText("")
         self.inp_login_pass.clear()
-        self.inp_login_pass.setEchoMode(QLineEdit.EchoMode.Password)
-        self.btn_login_eye.setText("👁")
+        self._login_pass_visible = False
+        self.inp_login_pass.setEchoMode(QLineEdit.Password)
+        self.btn_login_eye.setText("VER")
         self.btn_login_eye.setStyleSheet(
-            "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 16px; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
+            "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 11px; font-weight: 800; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
             "QPushButton:hover { background-color: #CBD5E1; }"
         )
         self.usuario_actual = dict(encontrado)
@@ -2129,7 +2136,7 @@ class KostalHmiWindow(QMainWindow):
         hlay.addStretch(1)
 
         # Info de Usuario y Rol
-        self.lbl_header_user = QLabel("👤 Juan Pérez")
+        self.lbl_header_user = QLabel("USUARIO: Juan Pérez")
         self.lbl_header_user.setStyleSheet("color: #F8FAFC; font-size: 12px; font-weight: 800;")
         hlay.addWidget(self.lbl_header_user)
 
@@ -2140,7 +2147,7 @@ class KostalHmiWindow(QMainWindow):
         )
         hlay.addWidget(self.lbl_header_rol)
 
-        self.btn_header_admin = QPushButton("🛠️ Panel Admin")
+        self.btn_header_admin = QPushButton("Panel Admin")
         self.btn_header_admin.setFixedHeight(32)
         self.btn_header_admin.setStyleSheet(
             "background-color: #7C3AED; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
@@ -2166,11 +2173,11 @@ class KostalHmiWindow(QMainWindow):
         llay.addWidget(self.btn_lang_en)
         hlay.addWidget(lang_box)
 
-        self.lbl_header_timer = QLabel("⏱ 00:00:00")
+        self.lbl_header_timer = QLabel("00:00:00")
         self.lbl_header_timer.setStyleSheet("color: #94A3B8; font-family: Consolas; font-size: 12px; font-weight: 700;")
         hlay.addWidget(self.lbl_header_timer)
 
-        self.btn_header_logout = QPushButton("⏻ Cerrar Sesión")
+        self.btn_header_logout = QPushButton("Cerrar Sesión")
         self.btn_header_logout.setFixedHeight(32)
         self.btn_header_logout.setStyleSheet(
             "background-color: #334155; color: #F8FAFC; font-size: 11px; font-weight: 700; padding: 0 10px; border-radius: 6px;"
@@ -2178,7 +2185,7 @@ class KostalHmiWindow(QMainWindow):
         self.btn_header_logout.clicked.connect(self._cerrar_sesion)
         hlay.addWidget(self.btn_header_logout)
 
-        self.btn_header_fs = QPushButton("⛶ Pantalla")
+        self.btn_header_fs = QPushButton("Pantalla Completa")
         self.btn_header_fs.setFixedHeight(32)
         self.btn_header_fs.setStyleSheet(
             "background-color: #1E293B; color: #E2E8F0; font-size: 11px; font-weight: 700; padding: 0 8px; border-radius: 6px;"
@@ -2186,7 +2193,7 @@ class KostalHmiWindow(QMainWindow):
         self.btn_header_fs.clicked.connect(self.alternar_pantalla_completa)
         hlay.addWidget(self.btn_header_fs)
 
-        self.btn_header_min = QPushButton("🗕 Minimizar")
+        self.btn_header_min = QPushButton("Minimizar")
         self.btn_header_min.setFixedHeight(32)
         self.btn_header_min.setStyleSheet(
             "background-color: #1E293B; color: #E2E8F0; font-size: 11px; font-weight: 700; padding: 0 8px; border-radius: 6px;"
@@ -2239,7 +2246,7 @@ class KostalHmiWindow(QMainWindow):
         row_rec_hdr.addWidget(self.lbl_rec_activa_title)
         row_rec_hdr.addStretch(1)
 
-        self.btn_ver_jigs = QPushButton("🔍 Ver Jigs")
+        self.btn_ver_jigs = QPushButton("Ver Jigs")
         self.btn_ver_jigs.setFixedHeight(26)
         self.btn_ver_jigs.setStyleSheet(
             f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 11px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
@@ -2304,7 +2311,7 @@ class KostalHmiWindow(QMainWindow):
         cplay.addWidget(lote_box)
 
         # Banner de estado de Set 0
-        self.lbl_set0_banner = QLabel("✓ CERO LISTO")
+        self.lbl_set0_banner = QLabel("CERO CALIBRADO")
         self.lbl_set0_banner.setAlignment(Qt.AlignCenter)
         self.lbl_set0_banner.setFixedHeight(28)
         cplay.addWidget(self.lbl_set0_banner)
@@ -2356,7 +2363,7 @@ class KostalHmiWindow(QMainWindow):
 
         cplay.addLayout(kpi_row)
 
-        self.btn_reg_fin_hora = QPushButton("⏱️ Registrar Fin de Hora")
+        self.btn_reg_fin_hora = QPushButton("Registrar Fin de Hora")
         self.btn_reg_fin_hora.setMinimumHeight(34)
         self.btn_reg_fin_hora.setStyleSheet(
             f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 12px; font-weight: 800; border-radius: 7px;"
@@ -2379,7 +2386,7 @@ class KostalHmiWindow(QMainWindow):
         )
         cplay2.addWidget(self.lbl_title_ctrl_pintado)
 
-        self.btn_pintar_main = QPushButton("🎨 INICIO DE PINTADO [OFF]")
+        self.btn_pintar_main = QPushButton("INICIO DE PINTADO [OFF]")
         self.btn_pintar_main.setMinimumHeight(56)
         self.btn_pintar_main.clicked.connect(self.alternar_pintar)
         cplay2.addWidget(self.btn_pintar_main)
@@ -2411,7 +2418,7 @@ class KostalHmiWindow(QMainWindow):
         hdr_row.addWidget(self.lbl_title_fixture)
         hdr_row.addStretch(1)
 
-        self.btn_recetario_admin_shortcut = QPushButton("🛠️ Recetario Admin")
+        self.btn_recetario_admin_shortcut = QPushButton("Recetario Admin")
         self.btn_recetario_admin_shortcut.setFixedHeight(26)
         self.btn_recetario_admin_shortcut.setStyleSheet(
             "background-color: #E0F2FE; color: #0369A1; font-size: 11px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
@@ -2424,19 +2431,19 @@ class KostalHmiWindow(QMainWindow):
         badge_row = QHBoxLayout()
         badge_row.setSpacing(6)
 
-        self.lbl_matriz_dim_badge = QLabel("📐 MATRIZ: 3 × 5 (15 PZ/JIG)")
+        self.lbl_matriz_dim_badge = QLabel("MATRIZ: 3 × 5 (15 PZ/JIG)")
         self.lbl_matriz_dim_badge.setStyleSheet(
             "background-color: #F1F5F9; color: #0F172A; font-size: 10px; font-weight: 800; padding: 4px 7px; border-radius: 5px;"
         )
         badge_row.addWidget(self.lbl_matriz_dim_badge)
 
-        self.lbl_matriz_dist_badge = QLabel("↔ X: 20.0 mm | ↕ Y: 35.0 mm | ↗ Diag: 40.3 mm")
+        self.lbl_matriz_dist_badge = QLabel("X: 20.0 mm | Y: 35.0 mm | Diag: 40.3 mm")
         self.lbl_matriz_dist_badge.setStyleSheet(
             "background-color: #F1F5F9; color: #334155; font-size: 10px; font-weight: 700; padding: 4px 7px; border-radius: 5px;"
         )
         badge_row.addWidget(self.lbl_matriz_dist_badge, 1)
 
-        self.btn_patron_toggle = QPushButton("⬇️ Vertical")
+        self.btn_patron_toggle = QPushButton("Patrón: Vertical")
         self.btn_patron_toggle.setFixedHeight(26)
         self.btn_patron_toggle.setStyleSheet(
             f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
@@ -2461,21 +2468,21 @@ class KostalHmiWindow(QMainWindow):
         tlay.setContentsMargins(8, 4, 8, 4)
         tlay.setSpacing(8)
 
-        self.lbl_tele_destino = QLabel("🎯 DESTINO P01: X=0.0 Y=0.0")
+        self.lbl_tele_destino = QLabel("DESTINO P01: X=0.0 Y=0.0")
         self.lbl_tele_destino.setStyleSheet("font-family: Consolas; font-size: 11px; font-weight: 800; color: #0369A1;")
         tlay.addWidget(self.lbl_tele_destino)
 
-        self.lbl_tele_plcrx = QLabel("📡 PLC RX: X=0.0 Y=0.0")
+        self.lbl_tele_plcrx = QLabel("PLC RX: X=0.0 Y=0.0")
         self.lbl_tele_plcrx.setStyleSheet("font-family: Consolas; font-size: 11px; font-weight: 800; color: #0F172A;")
         tlay.addWidget(self.lbl_tele_plcrx)
 
-        self.lbl_tele_conn = QLabel("🟠 SIMULACIÓN")
+        self.lbl_tele_conn = QLabel("○ SIMULACIÓN")
         self.lbl_tele_conn.setStyleSheet("font-size: 10px; font-weight: 900; color: #D97706;")
         tlay.addWidget(self.lbl_tele_conn)
 
         tlay.addStretch(1)
 
-        self.btn_probar_mov = QPushButton("⚡ Probar Movimiento")
+        self.btn_probar_mov = QPushButton("Probar Movimiento")
         self.btn_probar_mov.setFixedHeight(25)
         self.btn_probar_mov.setStyleSheet(
             "background-color: #0F172A; color: #38BDF8; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
@@ -2508,7 +2515,7 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_ley_ok.setStyleSheet(f"color: {COLOR_OK}; font-size: 10px; font-weight: 700;")
         self.lbl_ley_nok = QLabel("● Fallo / NOK")
         self.lbl_ley_nok.setStyleSheet(f"color: {COLOR_ERR}; font-size: 10px; font-weight: 700;")
-        self.lbl_ley_click = QLabel("💡 Modo Manual: Clic en pieza envía coord.")
+        self.lbl_ley_click = QLabel("Modo Manual: Clic en cavidad envía coordenada")
         self.lbl_ley_click.setStyleSheet("color: #475569; font-size: 10px; font-style: italic;")
 
         leg_row.addWidget(self.lbl_ley_pend)
@@ -2596,7 +2603,7 @@ class KostalHmiWindow(QMainWindow):
         # Botón MODO AUTO / MANUAL + Velocidad
         mode_vel_row = QHBoxLayout()
         mode_vel_row.setSpacing(6)
-        self.btn_modo = QPushButton("⚙ MODO: AUTO")
+        self.btn_modo = QPushButton("MODO: AUTO")
         self.btn_modo.setMinimumHeight(34)
         self.btn_modo.clicked.connect(self.alternar_modo)
         mode_vel_row.addWidget(self.btn_modo, 1)
@@ -2629,7 +2636,7 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_paso_jog_tit.setStyleSheet("font-size: 11px; font-weight: 800;")
         paso_row.addWidget(self.lbl_paso_jog_tit)
 
-        btn_p_minus = QPushButton("−")
+        btn_p_minus = QPushButton("-")
         btn_p_minus.setFixedSize(26, 26)
         btn_p_minus.clicked.connect(lambda: self.ajustar_paso_jog(-0.5))
         paso_row.addWidget(btn_p_minus)
@@ -2645,9 +2652,9 @@ class KostalHmiWindow(QMainWindow):
         btn_p_plus.clicked.connect(lambda: self.ajustar_paso_jog(0.5))
         paso_row.addWidget(btn_p_plus)
 
-        btn_numpad = QPushButton("🔢")
-        btn_numpad.setFixedSize(28, 26)
-        btn_numpad.setStyleSheet("background-color: #E0F2FE; color: #0369A1;")
+        btn_numpad = QPushButton("NUM")
+        btn_numpad.setFixedSize(38, 26)
+        btn_numpad.setStyleSheet("background-color: #E0F2FE; color: #0369A1; font-size: 10px; font-weight: 800; padding: 0;")
         btn_numpad.clicked.connect(self.abrir_teclado_numerico_paso)
         paso_row.addWidget(btn_numpad)
 
@@ -2728,7 +2735,7 @@ class KostalHmiWindow(QMainWindow):
         # Botones Home y Activar Tampo Manual
         hm_row = QHBoxLayout()
         hm_row.setSpacing(6)
-        self.btn_home = QPushButton("🏠 Home")
+        self.btn_home = QPushButton("Ir a Home")
         self.btn_home.setMinimumHeight(34)
         self.btn_home.setStyleSheet(
             "background-color: #0284C7; color: white; font-size: 12px; font-weight: 800; border-radius: 6px;"
@@ -2736,7 +2743,7 @@ class KostalHmiWindow(QMainWindow):
         self.btn_home.clicked.connect(self.ejecutar_home_general)
         hm_row.addWidget(self.btn_home)
 
-        self.btn_tampo_manual = QPushButton("🏷️ Activar Tampo")
+        self.btn_tampo_manual = QPushButton("Activar Tampo")
         self.btn_tampo_manual.setMinimumHeight(34)
         self.btn_tampo_manual.setStyleSheet(
             "background-color: #475569; color: white; font-size: 12px; font-weight: 800; border-radius: 6px;"
@@ -2757,7 +2764,7 @@ class KostalHmiWindow(QMainWindow):
         self.cal_collapsible = AnimatedCollapsibleBox(self.card_jog, expanded=False)
         cal_lay = QHBoxLayout()
         cal_lay.setSpacing(6)
-        self.btn_set_0 = QPushButton("↩ Set 0")
+        self.btn_set_0 = QPushButton("Set 0")
         self.btn_set_0.setMinimumHeight(32)
         self.btn_set_0.setStyleSheet(
             f"background-color: {COLOR_WARN}; color: white; font-size: 11px; font-weight: 800; border-radius: 6px;"
@@ -2765,7 +2772,7 @@ class KostalHmiWindow(QMainWindow):
         self.btn_set_0.clicked.connect(self.guardar_posicion_como_cero)
         cal_lay.addWidget(self.btn_set_0)
 
-        self.btn_set_home = QPushButton("⚙ Set Home")
+        self.btn_set_home = QPushButton("Set Home")
         self.btn_set_home.setMinimumHeight(32)
         self.btn_set_home.setStyleSheet(
             "background-color: #475569; color: white; font-size: 11px; font-weight: 800; border-radius: 6px;"
@@ -2780,7 +2787,7 @@ class KostalHmiWindow(QMainWindow):
         cero_box.setObjectName("SubSurface")
         zlay = QHBoxLayout(cero_box)
         zlay.setContentsMargins(8, 4, 8, 4)
-        self.lbl_cero_reg_tit = QLabel("🔒 CERO REGISTRADO:")
+        self.lbl_cero_reg_tit = QLabel("CERO REGISTRADO:")
         self.lbl_cero_reg_tit.setStyleSheet("font-size: 10px; font-weight: 800; color: #475569;")
         zlay.addWidget(self.lbl_cero_reg_tit)
         zlay.addStretch(1)
@@ -2807,7 +2814,7 @@ class KostalHmiWindow(QMainWindow):
 
         ir_row = QHBoxLayout()
         ir_row.setSpacing(8)
-        self.btn_inicio = QPushButton("▶ INICIO")
+        self.btn_inicio = QPushButton("INICIO")
         self.btn_inicio.setMinimumHeight(46)
         self.btn_inicio.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_inicio.setStyleSheet(
@@ -2816,7 +2823,7 @@ class KostalHmiWindow(QMainWindow):
         self.btn_inicio.clicked.connect(self.iniciar_ciclo_general)
         ir_row.addWidget(self.btn_inicio)
 
-        self.btn_reset = QPushButton("↻ RESET")
+        self.btn_reset = QPushButton("RESET")
         self.btn_reset.setMinimumHeight(46)
         self.btn_reset.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_reset.setStyleSheet(
@@ -2826,7 +2833,7 @@ class KostalHmiWindow(QMainWindow):
         ir_row.addWidget(self.btn_reset)
         mlay.addLayout(ir_row, 1)
 
-        self.btn_paro = QPushButton("🛑 PARO")
+        self.btn_paro = QPushButton("PARO")
         self.btn_paro.setMinimumHeight(54)
         self.btn_paro.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_paro.setStyleSheet(
@@ -3103,10 +3110,10 @@ class KostalHmiWindow(QMainWindow):
             f"{self._tr('estado_fixture')} ({self.matriz_filas} × {self.matriz_cols})"
         )
         self.lbl_matriz_dim_badge.setText(
-            f"📐 MATRIZ: {self.matriz_filas} × {self.matriz_cols} ({self.piezas_por_jig_actual} PZ/JIG)"
+            f"MATRIZ: {self.matriz_filas} × {self.matriz_cols} ({self.piezas_por_jig_actual} PZ/JIG)"
         )
         self.lbl_matriz_dist_badge.setText(
-            f"↔ X: {self.matriz_delta_x:.1f} mm | ↕ Y: {self.matriz_delta_y:.1f} mm | ↗ Diag: {self.matriz_dist_diag:.1f} mm"
+            f"X: {self.matriz_delta_x:.1f} mm | Y: {self.matriz_delta_y:.1f} mm | Diag: {self.matriz_dist_diag:.1f} mm"
         )
         self.btn_patron_toggle.setText(
             self._tr("patron_vert") if self.patron_pintado == "vertical" else self._tr("patron_horiz")
@@ -3119,7 +3126,7 @@ class KostalHmiWindow(QMainWindow):
         idx_dest = min(self.indice_matriz_actual, max(0, len(self.matriz_coordenadas) - 1))
         if self.matriz_coordenadas:
             dx, dy = self.matriz_coordenadas[idx_dest]
-            self.lbl_tele_destino.setText(f"🎯 DESTINO P{idx_dest + 1:02d}: X={dx:.1f} Y={dy:.1f}")
+            self.lbl_tele_destino.setText(f"DESTINO P{idx_dest + 1:02d}: X={dx:.1f} Y={dy:.1f}")
 
         # Modo AUTO / MANUAL y Cruceta
         if self.estado_manual:
@@ -3207,10 +3214,10 @@ class KostalHmiWindow(QMainWindow):
         self.plc_conectado = connected
         self.modo_conexion_str = mode_str
         if connected:
-            self.lbl_tele_conn.setText("🟢 PLC CONECTADO")
+            self.lbl_tele_conn.setText("● PLC CONECTADO")
             self.lbl_tele_conn.setStyleSheet("font-size: 10px; font-weight: 900; color: #059669;")
         else:
-            self.lbl_tele_conn.setText(f"🟠 {mode_str}")
+            self.lbl_tele_conn.setText(f"○ {mode_str}")
             self.lbl_tele_conn.setStyleSheet("font-size: 10px; font-weight: 900; color: #D97706;")
 
     @Slot(dict)
@@ -3224,7 +3231,7 @@ class KostalHmiWindow(QMainWindow):
         if "POS_Y" in snap:
             self.ultimo_plc_rx_y = float(snap["POS_Y"])
 
-        self.lbl_tele_plcrx.setText(f"📡 PLC RX: X={self.ultimo_plc_rx_x:.1f} Y={self.ultimo_plc_rx_y:.1f}")
+        self.lbl_tele_plcrx.setText(f"PLC RX: X={self.ultimo_plc_rx_x:.1f} Y={self.ultimo_plc_rx_y:.1f}")
 
         # Actualizar indicadores LED del PLC
         for sig_name, (pill, kind) in self.led_widgets.items():
@@ -3261,14 +3268,14 @@ class KostalHmiWindow(QMainWindow):
         if self.paro_requiere_reset:
             self.overlay.show_message(
                 "Secuencia de Rearme Requerida",
-                "Tras liberar el PARO es obligatorio presionar [↻ RESET] y posteriormente [▶ INICIO].",
+                "Tras liberar el PARO es obligatorio presionar [RESET] y posteriormente [INICIO].",
                 "warn",
             )
             return False
         if self.paro_requiere_inicio:
             self.overlay.show_message(
                 "Confirmación de Inicio Requerida",
-                "Presione el botón [▶ INICIO] para habilitar nuevamente los movimientos de la estación.",
+                "Presione el botón [INICIO] para habilitar nuevamente los movimientos de la estación.",
                 "warn",
             )
             return False
@@ -3565,7 +3572,7 @@ class KostalHmiWindow(QMainWindow):
             return
         self.tampo_manual_activo = True
         self.btn_tampo_manual.setEnabled(False)
-        self.btn_tampo_manual.setText("⏳ Tampo Activo (2s)...")
+        self.btn_tampo_manual.setText("Tampo Activo (2s)...")
         self.opc_worker.enqueue_pulse("S_TAMPO", duration_ms=2000)
         QTimer.singleShot(2100, self._finalizar_tampo_manual)
 
@@ -3579,7 +3586,7 @@ class KostalHmiWindow(QMainWindow):
             self.overlay.show_message("Paro Activo", "Libere primero el botón de PARO.", "error")
             return
         if self.paro_requiere_reset:
-            self.overlay.show_message("Reset Requerido", "Presione primero [↻ RESET] antes de [▶ INICIO].", "warn")
+            self.overlay.show_message("Reset Requerido", "Presione primero [RESET] antes de [INICIO].", "warn")
             return
         self.paro_requiere_inicio = False
         self.opc_worker.enqueue_pulse("INICIO", duration_ms=400)
@@ -3615,7 +3622,7 @@ class KostalHmiWindow(QMainWindow):
             self.paro_requiere_inicio = True
             self.opc_worker.enqueue_write("PINTAR", False)
             self.opc_worker.enqueue_write("STOP", True)
-            log_debug_hmi("🛑 PARO ACTIVADO por el usuario.")
+            log_debug_hmi("PARO ACTIVADO por el usuario.")
         else:
             self.opc_worker.enqueue_write("STOP", False)
             log_debug_hmi("PARO liberado -> Esperando secuencia RESET -> INICIO.")
@@ -3668,13 +3675,13 @@ class KostalHmiWindow(QMainWindow):
         mins = (self.sesion_segundos % 3600) // 60
         secs = self.sesion_segundos % 60
         t_str = f"{hrs:02d}:{mins:02d}:{secs:02d}"
-        self.lbl_header_timer.setText(f"⏱ {t_str}")
+        self.lbl_header_timer.setText(t_str)
         self.lbl_tiempo_sesion_val.setText(t_str)
 
     def _update_user_header_ui(self):
         nom = self.usuario_actual.get("nombre", "Operador")
         rol = self.usuario_actual.get("rol", "OPERADOR").upper()
-        self.lbl_header_user.setText(f"👤 {nom}")
+        self.lbl_header_user.setText(f"USUARIO: {nom}")
         self.lbl_header_rol.setText(rol)
         es_admin = (rol == "ADMINISTRADOR")
         self.btn_header_admin.setVisible(es_admin)
@@ -3728,12 +3735,12 @@ class KostalHmiWindow(QMainWindow):
         hlay = QHBoxLayout(hdr)
         hlay.setContentsMargins(16, 6, 16, 6)
 
-        lbl_t = QLabel("🛠️ KOSTAL — PANEL DE INGENIERÍA Y ADMINISTRACIÓN")
+        lbl_t = QLabel("KOSTAL — PANEL DE INGENIERÍA Y ADMINISTRACIÓN")
         lbl_t.setStyleSheet("color: #FFFFFF; font-size: 16px; font-weight: 900;")
         hlay.addWidget(lbl_t)
         hlay.addStretch(1)
 
-        btn_back = QPushButton("⬅ Volver a Pantalla de Operación")
+        btn_back = QPushButton("Volver a Pantalla de Operación")
         btn_back.setFixedHeight(34)
         btn_back.setStyleSheet(
             f"background-color: {COLOR_OK}; color: white; font-size: 12px; font-weight: 800; padding: 0 14px; border-radius: 6px;"
@@ -3761,10 +3768,10 @@ class KostalHmiWindow(QMainWindow):
         self.admin_stack = QStackedWidget()
 
         nav_items = [
-            ("📐 Recetario de Producción", 0),
-            ("📊 Estadísticas y Reportes", 1),
-            ("👥 Control de Usuarios", 2),
-            ("⚙️ Configuración Global PLC", 3),
+            ("Recetario de Producción", 0),
+            ("Estadísticas y Reportes", 1),
+            ("Control de Usuarios", 2),
+            ("Configuración Global PLC", 3),
         ]
         self.admin_nav_btns = []
         for text, idx in nav_items:
@@ -3780,7 +3787,7 @@ class KostalHmiWindow(QMainWindow):
 
         slay.addStretch(1)
 
-        btn_kb_adm = QPushButton("⌨️ Teclado en Pantalla")
+        btn_kb_adm = QPushButton("Teclado en Pantalla")
         btn_kb_adm.setMinimumHeight(36)
         btn_kb_adm.clicked.connect(abrir_teclado_tactil_windows)
         slay.addWidget(btn_kb_adm)
@@ -3819,7 +3826,7 @@ class KostalHmiWindow(QMainWindow):
         lay.setSpacing(10)
 
         top = QHBoxLayout()
-        lbl = QLabel("📐 Gestión de Recetas, Matrices de Fixture y Punto Cero (Set 0)")
+        lbl = QLabel("Gestión de Recetas, Matrices de Fixture y Punto Cero (Set 0)")
         lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 15px; font-weight: 900;")
         top.addWidget(lbl)
         top.addStretch(1)
@@ -3831,13 +3838,13 @@ class KostalHmiWindow(QMainWindow):
         self.combo_admin_rec.currentTextChanged.connect(self._on_admin_recipe_selected)
         top.addWidget(self.combo_admin_rec)
 
-        btn_new = QPushButton("➕ Nueva Receta")
+        btn_new = QPushButton("Nueva Receta")
         btn_new.setMinimumHeight(34)
         btn_new.setStyleSheet(f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-weight: 800;")
         btn_new.clicked.connect(self._admin_new_recipe)
         top.addWidget(btn_new)
 
-        btn_del = QPushButton("🗑️ Eliminar")
+        btn_del = QPushButton("Eliminar")
         btn_del.setMinimumHeight(34)
         btn_del.setStyleSheet(f"background-color: {COLOR_ERR}; color: white; font-weight: 800;")
         btn_del.clicked.connect(self._admin_delete_recipe)
@@ -3884,11 +3891,11 @@ class KostalHmiWindow(QMainWindow):
         lay.addLayout(form)
 
         img_row = QHBoxLayout()
-        btn_browse = QPushButton("📂 Seleccionar Imagen de Pieza...")
+        btn_browse = QPushButton("Seleccionar Imagen de Pieza...")
         btn_browse.clicked.connect(self._admin_browse_image)
         img_row.addWidget(btn_browse)
 
-        btn_use_curr_pos = QPushButton("📍 Tomar Posición Actual del PLC como Punto 0")
+        btn_use_curr_pos = QPushButton("Tomar Posición Actual del PLC como Punto 0")
         btn_use_curr_pos.setStyleSheet(f"background-color: {COLOR_WARN}; color: white; font-weight: 800;")
         btn_use_curr_pos.clicked.connect(self._admin_take_current_pos_as_zero)
         img_row.addWidget(btn_use_curr_pos)
@@ -3897,7 +3904,7 @@ class KostalHmiWindow(QMainWindow):
 
         lay.addStretch(1)
 
-        btn_save = QPushButton("💾 GUARDAR CAMBIOS EN RECETA Y ACTIVAR")
+        btn_save = QPushButton("GUARDAR CAMBIOS EN RECETA Y ACTIVAR")
         btn_save.setMinimumHeight(44)
         btn_save.setStyleSheet(f"background-color: {COLOR_OK}; color: white; font-size: 13px; font-weight: 900;")
         btn_save.clicked.connect(self._admin_save_recipe)
@@ -4034,18 +4041,18 @@ class KostalHmiWindow(QMainWindow):
         lay.setSpacing(10)
 
         top = QHBoxLayout()
-        lbl = QLabel("📊 Historial de Cortes Horarios y Reportes de Producción")
+        lbl = QLabel("Historial de Cortes Horarios y Reportes de Producción")
         lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 15px; font-weight: 900;")
         top.addWidget(lbl)
         top.addStretch(1)
 
-        btn_exp = QPushButton("📗 Exportar Reporte a Excel (.xlsx)")
+        btn_exp = QPushButton("Exportar Reporte a Excel (.xlsx)")
         btn_exp.setMinimumHeight(36)
         btn_exp.setStyleSheet(f"background-color: {COLOR_OK}; color: white; font-weight: 800;")
         btn_exp.clicked.connect(self._export_stats_excel)
         top.addWidget(btn_exp)
 
-        btn_clr = QPushButton("🧹 Reiniciar Contadores")
+        btn_clr = QPushButton("Reiniciar Contadores")
         btn_clr.setMinimumHeight(36)
         btn_clr.setStyleSheet(f"background-color: {COLOR_WARN}; color: white; font-weight: 800;")
         btn_clr.clicked.connect(self._reset_production_counters)
@@ -4137,7 +4144,7 @@ class KostalHmiWindow(QMainWindow):
         lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(10)
 
-        lbl = QLabel("👥 Administración de Usuarios y Roles de Acceso")
+        lbl = QLabel("Administración de Usuarios y Roles de Acceso")
         lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 15px; font-weight: 900;")
         lay.addWidget(lbl)
 
@@ -4158,11 +4165,11 @@ class KostalHmiWindow(QMainWindow):
         self.combo_u_rol.setView(QListView())
         self.combo_u_rol.addItems(["OPERADOR", "ADMINISTRADOR"])
 
-        btn_add_u = QPushButton("➕ Agregar / Actualizar")
+        btn_add_u = QPushButton("Agregar / Actualizar")
         btn_add_u.setStyleSheet(f"background-color: {COLOR_OK}; color: white; font-weight: 800;")
         btn_add_u.clicked.connect(self._admin_add_user)
 
-        btn_del_u = QPushButton("🗑️ Eliminar Seleccionado")
+        btn_del_u = QPushButton("Eliminar Seleccionado")
         btn_del_u.setStyleSheet(f"background-color: {COLOR_ERR}; color: white; font-weight: 800;")
         btn_del_u.clicked.connect(self._admin_del_user)
 
@@ -4222,7 +4229,7 @@ class KostalHmiWindow(QMainWindow):
         lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(12)
 
-        lbl = QLabel("⚙️ Parámetros Globales de Red OPC UA y Estación")
+        lbl = QLabel("Parámetros Globales de Red OPC UA y Estación")
         lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 15px; font-weight: 900;")
         lay.addWidget(lbl)
 
@@ -4256,13 +4263,13 @@ class KostalHmiWindow(QMainWindow):
         lay.addStretch(1)
 
         row_b = QHBoxLayout()
-        btn_reconnect = QPushButton("🔄 Reconectar con PLC Ahora")
+        btn_reconnect = QPushButton("Reconectar con PLC Ahora")
         btn_reconnect.setMinimumHeight(42)
         btn_reconnect.setStyleSheet(f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-weight: 800;")
         btn_reconnect.clicked.connect(self._admin_save_and_reconnect_plc)
         row_b.addWidget(btn_reconnect)
 
-        btn_save_cfg = QPushButton("💾 Guardar Configuración Global")
+        btn_save_cfg = QPushButton("Guardar Configuración Global")
         btn_save_cfg.setMinimumHeight(42)
         btn_save_cfg.setStyleSheet(f"background-color: {COLOR_OK}; color: white; font-weight: 800;")
         btn_save_cfg.clicked.connect(self._admin_save_global_config)
