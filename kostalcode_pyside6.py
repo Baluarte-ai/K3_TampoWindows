@@ -494,9 +494,9 @@ DICCIONARIO_IDIOMAS = {
         "ok": "OK",
         "reg_fin_hora": "Registrar Fin de Hora",
         "ctrl_pintado": "CONTROL PRINCIPAL DE PINTADO",
-        "btn_pintar_off": "INICIO DE PINTADO [OFF]",
-        "btn_pintar_on": "PINTANDO ACTIVO [ON]",
-        "btn_pintar_bloq": "PINTADO BLOQUEADO (SET 0 PENDIENTE)",
+        "btn_pintar_off": "INICIO DE\nPINTADO\n[OFF]",
+        "btn_pintar_on": "PINTANDO\nACTIVO\n[ON]",
+        "btn_pintar_bloq": "PINTADO\nBLOQUEADO\n(SET 0 PENDIENTE)",
         "estado_fixture": "ESTADO DEL FIXTURE",
         "recetario_admin": "Recetario Admin",
         "patron_vert": "Patrón: Vertical",
@@ -560,9 +560,9 @@ DICCIONARIO_IDIOMAS = {
         "ok": "OK",
         "reg_fin_hora": "Log Hourly Output",
         "ctrl_pintado": "MAIN PRINTING CONTROL",
-        "btn_pintar_off": "START PRINTING [OFF]",
-        "btn_pintar_on": "PRINTING ACTIVE [ON]",
-        "btn_pintar_bloq": "PRINTING LOCKED (SET 0 PENDING)",
+        "btn_pintar_off": "START\nPRINTING\n[OFF]",
+        "btn_pintar_on": "PRINTING\nACTIVE\n[ON]",
+        "btn_pintar_bloq": "PRINTING\nLOCKED\n(SET 0 PENDING)",
         "estado_fixture": "FIXTURE STATUS",
         "recetario_admin": "Recipe Admin",
         "patron_vert": "Pattern: Vertical",
@@ -2692,14 +2692,14 @@ class KostalHmiWindow(QMainWindow):
         self.btn_reg_fin_hora.clicked.connect(self.abrir_dialogo_fin_de_hora)
         cplay.addWidget(self.btn_reg_fin_hora)
 
-        lay.addWidget(card_proc, 1)
+        lay.addWidget(card_proc, 0)
 
         # Card 2: Control Principal de Pintado
         card_paint = QFrame()
         card_paint.setObjectName("IndustrialCard")
         cplay2 = QVBoxLayout(card_paint)
-        cplay2.setContentsMargins(12, 10, 12, 10)
-        cplay2.setSpacing(6)
+        cplay2.setContentsMargins(12, 10, 12, 12)
+        cplay2.setSpacing(8)
 
         self.lbl_title_ctrl_pintado = QLabel("CONTROL PRINCIPAL DE PINTADO")
         self.lbl_title_ctrl_pintado.setStyleSheet(
@@ -2707,12 +2707,13 @@ class KostalHmiWindow(QMainWindow):
         )
         cplay2.addWidget(self.lbl_title_ctrl_pintado)
 
-        self.btn_pintar_main = QPushButton("INICIO DE PINTADO [OFF]")
-        self.btn_pintar_main.setMinimumHeight(56)
+        self.btn_pintar_main = QPushButton("INICIO DE\nPINTADO\n[OFF]")
+        self.btn_pintar_main.setMinimumHeight(140)
+        self.btn_pintar_main.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_pintar_main.clicked.connect(self.alternar_pintar)
-        cplay2.addWidget(self.btn_pintar_main)
+        cplay2.addWidget(self.btn_pintar_main, 1)
 
-        lay.addWidget(card_paint, 0)
+        lay.addWidget(card_paint, 1)
         return col
 
 
@@ -3422,17 +3423,17 @@ class KostalHmiWindow(QMainWindow):
         if not self.set_0_confirmado:
             self.btn_pintar_main.setText(self._tr("btn_pintar_bloq"))
             self.btn_pintar_main.setStyleSheet(
-                "background-color: #94A3B8; color: #FFFFFF; font-size: 13px; font-weight: 900; border-radius: 8px;"
+                "background-color: #94A3B8; color: #FFFFFF; font-size: 17px; font-weight: 900; border-radius: 12px;"
             )
         elif self.estado_pintando:
             self.btn_pintar_main.setText(self._tr("btn_pintar_on"))
             self.btn_pintar_main.setStyleSheet(
-                f"background-color: {COLOR_OK}; color: #FFFFFF; font-size: 14px; font-weight: 900; border: 2px solid #34D399; border-radius: 8px;"
+                f"background-color: {COLOR_OK}; color: #FFFFFF; font-size: 20px; font-weight: 900; border: 2px solid #34D399; border-radius: 12px;"
             )
         else:
             self.btn_pintar_main.setText(self._tr("btn_pintar_off"))
             self.btn_pintar_main.setStyleSheet(
-                f"background-color: {COLOR_BRAND_PRIMARY}; color: #FFFFFF; font-size: 14px; font-weight: 900; border-radius: 8px;"
+                f"background-color: {COLOR_BRAND_PRIMARY}; color: #FFFFFF; font-size: 20px; font-weight: 900; border-radius: 12px;"
             )
 
         # Badges del Fixture
