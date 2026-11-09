@@ -4118,37 +4118,38 @@ class KostalHmiWindow(QMainWindow):
         # Header Admin
         hdr = QFrame()
         hdr.setObjectName("HeaderBar")
-        hdr.setFixedHeight(54)
+        hdr.setFixedHeight(64)
         hlay = QHBoxLayout(hdr)
-        hlay.setContentsMargins(16, 6, 16, 6)
+        hlay.setContentsMargins(16, 8, 16, 8)
         hlay.setSpacing(12)
 
-        pix_kostal_adm = cargar_logo_corporativo("LogoKostal.webp", 140, 28)
+        pix_kostal_adm = cargar_logo_corporativo("LogoKostal.webp", 150, 32)
         if pix_kostal_adm:
             lbl_k_adm = QLabel()
             lbl_k_adm.setPixmap(pix_kostal_adm)
             hlay.addWidget(lbl_k_adm)
 
         lbl_t = QLabel("PANEL DE INGENIERÍA Y ADMINISTRACIÓN")
-        lbl_t.setStyleSheet("color: #FFFFFF; font-size: 16px; font-weight: 900;")
+        lbl_t.setStyleSheet("color: #FFFFFF; font-size: 17px; font-weight: 900;")
         hlay.addWidget(lbl_t)
         hlay.addStretch(1)
 
-        pix_bal_adm = cargar_logo_corporativo("LOGO_BALUARTE.png", 130, 32)
+        pix_bal_adm = cargar_logo_corporativo("LOGO_BALUARTE.png", 140, 36)
         if pix_bal_adm:
             bal_adm_badge = QFrame()
             bal_adm_badge.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
             bal_adm_lay = QHBoxLayout(bal_adm_badge)
-            bal_adm_lay.setContentsMargins(8, 2, 8, 2)
+            bal_adm_lay.setContentsMargins(8, 3, 8, 3)
             lbl_bal_adm = QLabel()
             lbl_bal_adm.setPixmap(pix_bal_adm)
             bal_adm_lay.addWidget(lbl_bal_adm)
             hlay.addWidget(bal_adm_badge)
 
         btn_back = QPushButton("Volver a Pantalla de Operación")
-        btn_back.setFixedHeight(34)
+        btn_back.setMinimumHeight(46)
+        btn_back.setMinimumWidth(250)
         btn_back.setStyleSheet(
-            f"background-color: {COLOR_OK}; color: white; font-size: 12px; font-weight: 800; padding: 0 14px; border-radius: 6px;"
+            f"background-color: {COLOR_OK}; color: white; font-size: 14px; font-weight: 900; padding: 0 20px; border-radius: 8px;"
         )
         btn_back.clicked.connect(lambda: self.stack.setCurrentIndex(2))
         hlay.addWidget(btn_back)
@@ -4158,16 +4159,16 @@ class KostalHmiWindow(QMainWindow):
         body.setContentsMargins(12, 10, 12, 10)
         body.setSpacing(12)
 
-        # Sidebar de navegación
+        # Sidebar de navegación con botones táctiles grandes
         sidebar = QFrame()
         sidebar.setObjectName("IndustrialCard")
-        sidebar.setFixedWidth(230)
+        sidebar.setFixedWidth(265)
         slay = QVBoxLayout(sidebar)
-        slay.setContentsMargins(10, 12, 10, 12)
-        slay.setSpacing(8)
+        slay.setContentsMargins(12, 14, 12, 14)
+        slay.setSpacing(10)
 
         lbl_nav = QLabel("MÓDULOS DE GESTIÓN")
-        lbl_nav.setStyleSheet("color: #64748B; font-size: 10px; font-weight: 900;")
+        lbl_nav.setStyleSheet("color: #64748B; font-size: 11px; font-weight: 900;")
         slay.addWidget(lbl_nav)
 
         self.admin_stack = QStackedWidget()
@@ -4181,9 +4182,9 @@ class KostalHmiWindow(QMainWindow):
         self.admin_nav_btns = []
         for text, idx in nav_items:
             b = QPushButton(text)
-            b.setMinimumHeight(40)
+            b.setMinimumHeight(56)
             b.setStyleSheet(
-                "QPushButton { text-align: left; padding-left: 12px; background-color: #F1F5F9; color: #0F172A; font-weight: 800; border-radius: 7px; }"
+                "QPushButton { text-align: left; padding-left: 16px; background-color: #F1F5F9; color: #0F172A; font-size: 14px; font-weight: 800; border-radius: 9px; }"
                 "QPushButton:hover { background-color: #E2E8F0; }"
             )
             b.clicked.connect(lambda _, i=idx: self._switch_admin_tab(i))
@@ -4193,8 +4194,11 @@ class KostalHmiWindow(QMainWindow):
         slay.addStretch(1)
 
         btn_kb_adm = QPushButton("Teclado en Pantalla")
-        btn_kb_adm.setMinimumHeight(36)
-        btn_kb_adm.clicked.connect(abrir_teclado_tactil_windows)
+        btn_kb_adm.setMinimumHeight(50)
+        btn_kb_adm.setStyleSheet(
+            "background-color: #1E293B; color: #FFFFFF; font-size: 13px; font-weight: 800; border-radius: 8px;"
+        )
+        btn_kb_adm.clicked.connect(lambda: abrir_teclado_tactil_windows(forzar=True))
         slay.addWidget(btn_kb_adm)
 
         body.addWidget(sidebar)
@@ -4215,11 +4219,11 @@ class KostalHmiWindow(QMainWindow):
         for i, b in enumerate(self.admin_nav_btns):
             if i == idx:
                 b.setStyleSheet(
-                    f"text-align: left; padding-left: 12px; background-color: {COLOR_BRAND_PRIMARY}; color: white; font-weight: 800; border-radius: 7px;"
+                    f"text-align: left; padding-left: 16px; background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 14px; font-weight: 900; border-radius: 9px;"
                 )
             else:
                 b.setStyleSheet(
-                    "text-align: left; padding-left: 12px; background-color: #F1F5F9; color: #0F172A; font-weight: 800; border-radius: 7px;"
+                    "text-align: left; padding-left: 16px; background-color: #F1F5F9; color: #0F172A; font-size: 14px; font-weight: 800; border-radius: 9px;"
                 )
 
     # ---------------- TAB 0: RECETARIO DE PRODUCCIÓN ----------------
@@ -4227,31 +4231,38 @@ class KostalHmiWindow(QMainWindow):
         tab = QFrame()
         tab.setObjectName("IndustrialCard")
         lay = QVBoxLayout(tab)
-        lay.setContentsMargins(16, 14, 16, 14)
-        lay.setSpacing(10)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(12)
 
         top = QHBoxLayout()
+        top.setSpacing(10)
         lbl = QLabel("Gestión de Recetas, Matrices de Fixture y Punto Cero (Set 0)")
-        lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 15px; font-weight: 900;")
+        lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 16px; font-weight: 900;")
         top.addWidget(lbl)
         top.addStretch(1)
 
         self.combo_admin_rec = QComboBox()
         self.combo_admin_rec.setView(QListView())
-        self.combo_admin_rec.setMinimumWidth(260)
-        self.combo_admin_rec.setMinimumHeight(34)
+        self.combo_admin_rec.setMinimumWidth(280)
+        self.combo_admin_rec.setMinimumHeight(48)
         self.combo_admin_rec.currentTextChanged.connect(self._on_admin_recipe_selected)
         top.addWidget(self.combo_admin_rec)
 
         btn_new = QPushButton("Nueva Receta")
-        btn_new.setMinimumHeight(34)
-        btn_new.setStyleSheet(f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-weight: 800;")
+        btn_new.setMinimumHeight(48)
+        btn_new.setMinimumWidth(165)
+        btn_new.setStyleSheet(
+            f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 14px; font-weight: 900; padding: 0 18px; border-radius: 8px;"
+        )
         btn_new.clicked.connect(self._admin_new_recipe)
         top.addWidget(btn_new)
 
         btn_del = QPushButton("Eliminar")
-        btn_del.setMinimumHeight(34)
-        btn_del.setStyleSheet(f"background-color: {COLOR_ERR}; color: white; font-weight: 800;")
+        btn_del.setMinimumHeight(48)
+        btn_del.setMinimumWidth(140)
+        btn_del.setStyleSheet(
+            f"background-color: {COLOR_ERR}; color: white; font-size: 14px; font-weight: 900; padding: 0 18px; border-radius: 8px;"
+        )
         btn_del.clicked.connect(self._admin_delete_recipe)
         top.addWidget(btn_del)
         lay.addLayout(top)
@@ -4288,30 +4299,41 @@ class KostalHmiWindow(QMainWindow):
         ]
         for label_txt, widget, r, c in fields:
             l = QLabel(label_txt)
-            l.setStyleSheet("font-size: 12px; font-weight: 700; color: #334155;")
+            l.setStyleSheet("font-size: 13px; font-weight: 700; color: #334155;")
             form.addWidget(l, r, c)
-            widget.setMinimumHeight(34)
+            widget.setMinimumHeight(42)
             form.addWidget(widget, r, c + 1)
 
         lay.addLayout(form)
 
         img_row = QHBoxLayout()
+        img_row.setSpacing(12)
         btn_browse = QPushButton("Seleccionar Imagen de Pieza...")
+        btn_browse.setMinimumHeight(50)
+        btn_browse.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_browse.setStyleSheet(
+            f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 14px; font-weight: 900; padding: 0 20px; border-radius: 8px;"
+        )
         btn_browse.clicked.connect(self._admin_browse_image)
-        img_row.addWidget(btn_browse)
+        img_row.addWidget(btn_browse, 1)
 
         btn_use_curr_pos = QPushButton("Tomar Posición Actual del PLC como Punto 0")
-        btn_use_curr_pos.setStyleSheet(f"background-color: {COLOR_WARN}; color: white; font-weight: 800;")
+        btn_use_curr_pos.setMinimumHeight(50)
+        btn_use_curr_pos.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_use_curr_pos.setStyleSheet(
+            f"background-color: {COLOR_WARN}; color: white; font-size: 14px; font-weight: 900; padding: 0 20px; border-radius: 8px;"
+        )
         btn_use_curr_pos.clicked.connect(self._admin_take_current_pos_as_zero)
-        img_row.addWidget(btn_use_curr_pos)
-        img_row.addStretch(1)
+        img_row.addWidget(btn_use_curr_pos, 1)
         lay.addLayout(img_row)
 
         lay.addStretch(1)
 
         btn_save = QPushButton("GUARDAR CAMBIOS EN RECETA Y ACTIVAR")
-        btn_save.setMinimumHeight(44)
-        btn_save.setStyleSheet(f"background-color: {COLOR_OK}; color: white; font-size: 13px; font-weight: 900;")
+        btn_save.setMinimumHeight(58)
+        btn_save.setStyleSheet(
+            f"background-color: {COLOR_OK}; color: white; font-size: 16px; font-weight: 900; border-radius: 10px;"
+        )
         btn_save.clicked.connect(self._admin_save_recipe)
         lay.addWidget(btn_save)
         return tab
@@ -4442,24 +4464,31 @@ class KostalHmiWindow(QMainWindow):
         tab = QFrame()
         tab.setObjectName("IndustrialCard")
         lay = QVBoxLayout(tab)
-        lay.setContentsMargins(16, 14, 16, 14)
-        lay.setSpacing(10)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(12)
 
         top = QHBoxLayout()
+        top.setSpacing(10)
         lbl = QLabel("Historial de Cortes Horarios y Reportes de Producción")
-        lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 15px; font-weight: 900;")
+        lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 16px; font-weight: 900;")
         top.addWidget(lbl)
         top.addStretch(1)
 
         btn_exp = QPushButton("Exportar Reporte a Excel (.xlsx)")
-        btn_exp.setMinimumHeight(36)
-        btn_exp.setStyleSheet(f"background-color: {COLOR_OK}; color: white; font-weight: 800;")
+        btn_exp.setMinimumHeight(50)
+        btn_exp.setMinimumWidth(260)
+        btn_exp.setStyleSheet(
+            f"background-color: {COLOR_OK}; color: white; font-size: 14px; font-weight: 900; padding: 0 20px; border-radius: 8px;"
+        )
         btn_exp.clicked.connect(self._export_stats_excel)
         top.addWidget(btn_exp)
 
         btn_clr = QPushButton("Reiniciar Contadores")
-        btn_clr.setMinimumHeight(36)
-        btn_clr.setStyleSheet(f"background-color: {COLOR_WARN}; color: white; font-weight: 800;")
+        btn_clr.setMinimumHeight(50)
+        btn_clr.setMinimumWidth(205)
+        btn_clr.setStyleSheet(
+            f"background-color: {COLOR_WARN}; color: white; font-size: 14px; font-weight: 900; padding: 0 20px; border-radius: 8px;"
+        )
         btn_clr.clicked.connect(self._reset_production_counters)
         top.addWidget(btn_clr)
         lay.addLayout(top)
@@ -4546,11 +4575,11 @@ class KostalHmiWindow(QMainWindow):
         tab = QFrame()
         tab.setObjectName("IndustrialCard")
         lay = QVBoxLayout(tab)
-        lay.setContentsMargins(16, 14, 16, 14)
-        lay.setSpacing(10)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(12)
 
         lbl = QLabel("Administración de Usuarios y Roles de Acceso")
-        lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 15px; font-weight: 900;")
+        lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 16px; font-weight: 900;")
         lay.addWidget(lbl)
 
         self.tbl_users = QTableWidget(0, 4)
@@ -4560,8 +4589,9 @@ class KostalHmiWindow(QMainWindow):
         lay.addWidget(self.tbl_users, 1)
 
         row_add = QHBoxLayout()
+        row_add.setSpacing(10)
         self.inp_u_id = QLineEdit()
-        self.inp_u_id.setPlaceholderText("ID usuario (ej. op2)")
+        self.inp_u_id.setPlaceholderText("ID usuario (ej. KOSTAL-0842)")
         self.inp_u_nom = QLineEdit()
         self.inp_u_nom.setPlaceholderText("Nombre completo")
         self.inp_u_pass = QLineEdit()
@@ -4570,17 +4600,28 @@ class KostalHmiWindow(QMainWindow):
         self.combo_u_rol.setView(QListView())
         self.combo_u_rol.addItems(["OPERADOR", "ADMINISTRADOR"])
 
+        for w in (self.inp_u_id, self.inp_u_nom, self.inp_u_pass, self.combo_u_rol):
+            w.setMinimumHeight(48)
+            row_add.addWidget(w, 1)
+
         btn_add_u = QPushButton("Agregar / Actualizar")
-        btn_add_u.setStyleSheet(f"background-color: {COLOR_OK}; color: white; font-weight: 800;")
+        btn_add_u.setMinimumHeight(52)
+        btn_add_u.setMinimumWidth(210)
+        btn_add_u.setStyleSheet(
+            f"background-color: {COLOR_OK}; color: white; font-size: 14px; font-weight: 900; padding: 0 20px; border-radius: 8px;"
+        )
         btn_add_u.clicked.connect(self._admin_add_user)
+        row_add.addWidget(btn_add_u)
 
         btn_del_u = QPushButton("Eliminar Seleccionado")
-        btn_del_u.setStyleSheet(f"background-color: {COLOR_ERR}; color: white; font-weight: 800;")
+        btn_del_u.setMinimumHeight(52)
+        btn_del_u.setMinimumWidth(210)
+        btn_del_u.setStyleSheet(
+            f"background-color: {COLOR_ERR}; color: white; font-size: 14px; font-weight: 900; padding: 0 20px; border-radius: 8px;"
+        )
         btn_del_u.clicked.connect(self._admin_del_user)
+        row_add.addWidget(btn_del_u)
 
-        for w in (self.inp_u_id, self.inp_u_nom, self.inp_u_pass, self.combo_u_rol, btn_add_u, btn_del_u):
-            w.setMinimumHeight(34)
-            row_add.addWidget(w)
         lay.addLayout(row_add)
         return tab
 
@@ -4633,15 +4674,15 @@ class KostalHmiWindow(QMainWindow):
         tab = QFrame()
         tab.setObjectName("IndustrialCard")
         lay = QVBoxLayout(tab)
-        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setContentsMargins(18, 16, 18, 16)
         lay.setSpacing(12)
 
         lbl = QLabel("Parámetros Globales de Red OPC UA y Estación")
-        lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 15px; font-weight: 900;")
+        lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 16px; font-weight: 900;")
         lay.addWidget(lbl)
 
         grid = QGridLayout()
-        grid.setSpacing(10)
+        grid.setSpacing(12)
         self.adm_cfg_est = QLineEdit()
         self.adm_cfg_ip = QLineEdit()
         self.adm_cfg_port = QLineEdit()
@@ -4661,26 +4702,33 @@ class KostalHmiWindow(QMainWindow):
         ]
         for txt, w, r in cfg_items:
             l = QLabel(txt)
-            l.setStyleSheet("font-weight: 700; color: #334155;")
+            l.setStyleSheet("font-size: 13px; font-weight: 700; color: #334155;")
             grid.addWidget(l, r, 0)
-            w.setMinimumHeight(36)
+            w.setMinimumHeight(44)
             grid.addWidget(w, r, 1)
 
         lay.addLayout(grid)
         lay.addStretch(1)
 
         row_b = QHBoxLayout()
+        row_b.setSpacing(12)
         btn_reconnect = QPushButton("Reconectar con PLC Ahora")
-        btn_reconnect.setMinimumHeight(42)
-        btn_reconnect.setStyleSheet(f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-weight: 800;")
+        btn_reconnect.setMinimumHeight(56)
+        btn_reconnect.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_reconnect.setStyleSheet(
+            f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 15px; font-weight: 900; border-radius: 9px;"
+        )
         btn_reconnect.clicked.connect(self._admin_save_and_reconnect_plc)
-        row_b.addWidget(btn_reconnect)
+        row_b.addWidget(btn_reconnect, 1)
 
         btn_save_cfg = QPushButton("Guardar Configuración Global")
-        btn_save_cfg.setMinimumHeight(42)
-        btn_save_cfg.setStyleSheet(f"background-color: {COLOR_OK}; color: white; font-weight: 800;")
+        btn_save_cfg.setMinimumHeight(56)
+        btn_save_cfg.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_save_cfg.setStyleSheet(
+            f"background-color: {COLOR_OK}; color: white; font-size: 15px; font-weight: 900; border-radius: 9px;"
+        )
         btn_save_cfg.clicked.connect(self._admin_save_global_config)
-        row_b.addWidget(btn_save_cfg)
+        row_b.addWidget(btn_save_cfg, 1)
         lay.addLayout(row_b)
         return tab
 
