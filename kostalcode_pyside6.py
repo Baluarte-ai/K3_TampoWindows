@@ -32,13 +32,13 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QFont, QPixmap, QPainterPath, QIcon,
-    QImage, QLinearGradient
+    QImage, QLinearGradient, QPalette
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QFrame, QStackedWidget,
     QScrollArea, QSizePolicy, QFileDialog, QTableWidget, QTableWidgetItem,
-    QHeaderView, QProgressBar, QAbstractItemView
+    QHeaderView, QProgressBar, QAbstractItemView, QListView
 )
 
 try:
@@ -299,15 +299,33 @@ def cargar_configuracion_disco():
                     cfg.update(datos)
         except Exception as e:
             print(f"Error leyendo {CONFIG_FILE}: {e}")
-    # Normalizar recetas
+    # Normalizar recetas (soportando ambos formatos de llaves en config_hmi.json)
     for idx, rec in enumerate(cfg.get("recetas", []), start=1):
         rec["filas"] = max(1, min(5, int(rec.get("filas", 3))))
-        rec["columnas"] = max(1, min(5, int(rec.get("columnas", 5))))
+        cols_val = rec.get("cols", rec.get("columnas", 5))
+        rec["cols"] = max(1, min(5, int(cols_val)))
+        rec["columnas"] = rec["cols"]
         rec["piezas_por_jig"] = obtener_piezas_por_jig_receta(rec)
-        rec["cero_x"] = limitar_coord_x(rec.get("cero_x", 0.0))
-        rec["cero_y"] = limitar_coord_y(rec.get("cero_y", 0.0))
-        if "set_0_listo" not in rec:
-            rec["set_0_listo"] = True
+        rec["piezas"] = rec["piezas_por_jig"]
+        dx_val = float(rec.get("delta_x", rec.get("espacio_x", 20.0)))
+        dy_val = float(rec.get("delta_y", rec.get("espacio_y", 35.0)))
+        rec["delta_x"] = dx_val
+        rec["espacio_x"] = dx_val
+        rec["delta_y"] = dy_val
+        rec["espacio_y"] = dy_val
+        vel_val = float(rec.get("velocidad", rec.get("vel_x", 100.0)))
+        rec["velocidad"] = vel_val
+        rec["vel_x"] = vel_val
+        rec["vel_y"] = vel_val
+        cx_val = limitar_coord_x(rec.get("cero_guardado_x", rec.get("cero_x", 0.0)))
+        cy_val = limitar_coord_y(rec.get("cero_guardado_y", rec.get("cero_y", 0.0)))
+        rec["cero_guardado_x"] = cx_val
+        rec["cero_x"] = cx_val
+        rec["cero_guardado_y"] = cy_val
+        rec["cero_y"] = cy_val
+        cal_val = bool(rec.get("cero_calibrado", rec.get("set_0_listo", True)))
+        rec["cero_calibrado"] = cal_val
+        rec["set_0_listo"] = cal_val
     return cfg
 
 
@@ -768,13 +786,7 @@ class OpcUaWorker(QThread):
 
     def stop_worker(self):
         self._running = False
-        if self.server and self.server_running:
-            try:
-                self.server.stop()
-                self.server_running = False
-            except Exception:
-                pass
-        self.wait(2500)
+        self.wait(1500)
 
 
 # ==============================================================================
@@ -1147,6 +1159,35 @@ class InWindowOverlayLayer(QWidget):
                 background-color: transparent;
                 border: none;
             }
+            QComboBox {
+                background-color: #FFFFFF;
+                color: #0F172A;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #FFFFFF;
+                color: #0F172A;
+                border: 1px solid #CBD5E1;
+                selection-background-color: #E0F2FE;
+                selection-color: #0369A1;
+                outline: 0;
+                padding: 4px;
+            }
+            QComboBox QAbstractItemView::item {
+                background-color: #FFFFFF;
+                color: #0F172A;
+                min-height: 28px;
+                padding: 4px 8px;
+            }
+            QComboBox QAbstractItemView::item:selected,
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #E0F2FE;
+                color: #0369A1;
+            }
         """)
 
         self.root_layout = QVBoxLayout(self)
@@ -1263,6 +1304,7 @@ class InWindowOverlayLayer(QWidget):
         lay.addWidget(lbl_sub)
 
         combo = QComboBox()
+        combo.setView(QListView())
         combo.setMinimumHeight(38)
         nombres = [r.get("nombre", "") for r in recetas]
         combo.addItems(nombres)
@@ -1581,6 +1623,35 @@ QLineEdit, QComboBox {{
 }}
 QLineEdit:focus, QComboBox:focus {{
     border: 2px solid {COLOR_ACCENT_CYAN};
+}}
+QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 24px;
+    border-left: 1px solid #E2E8F0;
+    background-color: #F8FAFC;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+}}
+QComboBox QAbstractItemView {{
+    background-color: #FFFFFF;
+    color: {COLOR_TEXT_PRI};
+    border: 1px solid {COLOR_BORDER};
+    selection-background-color: #E0F2FE;
+    selection-color: #0369A1;
+    outline: 0;
+    padding: 4px;
+}}
+QComboBox QAbstractItemView::item {{
+    background-color: #FFFFFF;
+    color: {COLOR_TEXT_PRI};
+    min-height: 28px;
+    padding: 4px 8px;
+}}
+QComboBox QAbstractItemView::item:selected,
+QComboBox QAbstractItemView::item:hover {{
+    background-color: #E0F2FE;
+    color: #0369A1;
 }}
 QPushButton {{
     background-color: {COLOR_BRAND_PRIMARY};
@@ -1912,6 +1983,7 @@ class KostalHmiWindow(QMainWindow):
 
         clay.addWidget(QLabel("Seleccionar Usuario / Turno:"))
         self.combo_login_user = QComboBox()
+        self.combo_login_user.setView(QListView())
         self.combo_login_user.setMinimumHeight(40)
         self._refresh_login_users_combo()
         clay.addWidget(self.combo_login_user)
@@ -2151,6 +2223,7 @@ class KostalHmiWindow(QMainWindow):
         cplay.addLayout(row_rec_hdr)
 
         self.combo_receta_op = QComboBox()
+        self.combo_receta_op.setView(QListView())
         self.combo_receta_op.setMinimumHeight(32)
         self.combo_receta_op.activated.connect(self._on_operator_recipe_combo_activated)
         cplay.addWidget(self.combo_receta_op)
@@ -3456,8 +3529,11 @@ class KostalHmiWindow(QMainWindow):
         rec_nom = self.config.get("receta_activa", "")
         for r in self.config.get("recetas", []):
             if r.get("nombre") == rec_nom:
+                r["cero_guardado_x"] = self.cero_guardado_x
                 r["cero_x"] = self.cero_guardado_x
+                r["cero_guardado_y"] = self.cero_guardado_y
                 r["cero_y"] = self.cero_guardado_y
+                r["cero_calibrado"] = True
                 r["set_0_listo"] = True
                 break
 
@@ -3751,6 +3827,7 @@ class KostalHmiWindow(QMainWindow):
         top.addStretch(1)
 
         self.combo_admin_rec = QComboBox()
+        self.combo_admin_rec.setView(QListView())
         self.combo_admin_rec.setMinimumWidth(260)
         self.combo_admin_rec.setMinimumHeight(34)
         self.combo_admin_rec.currentTextChanged.connect(self._on_admin_recipe_selected)
@@ -3926,13 +4003,21 @@ class KostalHmiWindow(QMainWindow):
             "pieza": self.adm_rec_pieza.text().strip() or "Pieza",
             "modelo": self.adm_rec_modelo.text().strip() or "M1",
             "filas": f,
+            "cols": c,
             "columnas": c,
+            "piezas": pz,
             "piezas_por_jig": pz,
+            "delta_x": dx,
             "espacio_x": dx,
+            "delta_y": dy,
             "espacio_y": dy,
+            "cero_guardado_x": cx,
             "cero_x": cx,
+            "cero_guardado_y": cy,
             "cero_y": cy,
+            "cero_calibrado": True,
             "set_0_listo": True,
+            "velocidad": vel,
             "vel_x": vel,
             "vel_y": vel,
             "imagen": self.adm_rec_img.text().strip(),
@@ -4072,6 +4157,7 @@ class KostalHmiWindow(QMainWindow):
         self.inp_u_pass = QLineEdit()
         self.inp_u_pass.setPlaceholderText("Contraseña / PIN")
         self.combo_u_rol = QComboBox()
+        self.combo_u_rol.setView(QListView())
         self.combo_u_rol.addItems(["OPERADOR", "ADMINISTRADOR"])
 
         btn_add_u = QPushButton("➕ Agregar / Actualizar")
@@ -4226,6 +4312,24 @@ def main():
     )
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+
+    # Forzar paleta industrial clara explícita para que el Modo Oscuro de Windows 10/11
+    # nunca pinte de negro los desplegables (QComboBox popups), tablas ni menús.
+    light_pal = QPalette()
+    light_pal.setColor(QPalette.Window, QColor(COLOR_BG_MAIN))
+    light_pal.setColor(QPalette.WindowText, QColor(COLOR_TEXT_PRI))
+    light_pal.setColor(QPalette.Base, QColor("#FFFFFF"))
+    light_pal.setColor(QPalette.AlternateBase, QColor("#F8FAFC"))
+    light_pal.setColor(QPalette.ToolTipBase, QColor("#FFFFFF"))
+    light_pal.setColor(QPalette.ToolTipText, QColor(COLOR_TEXT_PRI))
+    light_pal.setColor(QPalette.Text, QColor(COLOR_TEXT_PRI))
+    light_pal.setColor(QPalette.Button, QColor("#FFFFFF"))
+    light_pal.setColor(QPalette.ButtonText, QColor(COLOR_TEXT_PRI))
+    light_pal.setColor(QPalette.BrightText, QColor("#FFFFFF"))
+    light_pal.setColor(QPalette.Highlight, QColor("#E0F2FE"))
+    light_pal.setColor(QPalette.HighlightedText, QColor("#0369A1"))
+    app.setPalette(light_pal)
+
     window = KostalHmiWindow()
     window.show()
     sys.exit(app.exec())
