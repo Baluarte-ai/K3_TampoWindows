@@ -25,10 +25,11 @@ import math
 import socket
 import datetime
 import subprocess
+import threading
 
 from PySide6.QtCore import (
     Qt, QThread, Signal, Slot, QTimer, QPropertyAnimation, QEasingCurve,
-    QRectF, QPointF, QSize
+    QRectF, QPointF, QSize, QObject, QEvent
 )
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QFont, QPixmap, QPainterPath, QIcon,
@@ -40,6 +41,12 @@ from PySide6.QtWidgets import (
     QScrollArea, QSizePolicy, QFileDialog, QTableWidget, QTableWidgetItem,
     QHeaderView, QProgressBar, QAbstractItemView, QListView
 )
+
+try:
+    from PIL import Image as PilImage
+    PIL_DISPONIBLE = True
+except ImportError:
+    PIL_DISPONIBLE = False
 
 try:
     from opcua import Client, Server, ua
@@ -56,27 +63,125 @@ except ImportError:
 
 
 # ==============================================================================
-# UTILIDAD PARA TECLADO TÁCTIL DE WINDOWS (TABTIP / OSK)
+# UTILIDAD PARA TECLADO TÁCTIL DE WINDOWS (TABTIP / OSK) E ICONOS VECTORIALES
 # ==============================================================================
-def abrir_teclado_tactil_windows():
-    """Abre el teclado táctil o en pantalla de Windows para pantallas industriales."""
+_ultimo_teclado_ts = 0.0
+_estado_teclado_visible = False
+
+
+def abrir_teclado_tactil_windows(forzar=False):
+    """Abre automáticamente el teclado táctil o en pantalla de Windows sin bloquear la UI."""
+    global _ultimo_teclado_ts, _estado_teclado_visible
     if os.name != "nt":
         return
-    try:
-        rutas_tabtip = [
-            r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
-            r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
-        ]
-        for ruta in rutas_tabtip:
-            if os.path.exists(ruta):
-                subprocess.Popen([ruta], shell=False)
-                return
-        os.startfile("osk.exe")
-    except Exception:
+    ahora = time.time()
+    if not forzar and (ahora - _ultimo_teclado_ts < 0.45):
+        return
+    _ultimo_teclado_ts = ahora
+    _estado_teclado_visible = True
+
+    def _async_launch():
         try:
-            subprocess.Popen("osk.exe", shell=True)
+            rutas_tabtip = [
+                r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
+                r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
+            ]
+            for ruta in rutas_tabtip:
+                if os.path.exists(ruta):
+                    try:
+                        os.startfile(ruta)
+                        return
+                    except Exception:
+                        subprocess.Popen([ruta], shell=False)
+                        return
+            os.startfile("osk.exe")
         except Exception:
-            pass
+            try:
+                subprocess.Popen(
+                    ["osk.exe"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+                )
+            except Exception:
+                pass
+
+    threading.Thread(target=_async_launch, daemon=True).start()
+
+
+def ocultar_teclado_tactil_windows(forzar=False):
+    """Solicita el cierre del teclado en pantalla cuando se confirma una entrada."""
+    global _estado_teclado_visible
+    if os.name != "nt":
+        return
+    if not _estado_teclado_visible and not forzar:
+        return
+    _estado_teclado_visible = False
+    if forzar:
+        def _async_hide():
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", "osk.exe"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+                    timeout=0.5,
+                )
+            except Exception:
+                pass
+        threading.Thread(target=_async_hide, daemon=True).start()
+
+
+class _AutoTouchKeyboardFilter(QObject):
+    """Filtro global que despliega automáticamente el teclado al enfocar o tocar cualquier QLineEdit editable."""
+    def eventFilter(self, obj, event):
+        if isinstance(obj, QLineEdit):
+            etype = event.type()
+            if etype in (QEvent.FocusIn, QEvent.MouseButtonPress, QEvent.TouchBegin):
+                if obj.isEnabled() and not obj.isReadOnly() and not getattr(obj, "_no_auto_keyboard", False):
+                    abrir_teclado_tactil_windows()
+        return super().eventFilter(obj, event)
+
+
+def crear_icono_ojo(mostrar_texto: bool = False) -> QIcon:
+    """Genera un icono vectorial limpio (ojo / ojo tachado) mediante QPainter sin usar emojis."""
+    sz = 48
+    pix = QPixmap(sz, sz)
+    pix.fill(Qt.transparent)
+
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing, True)
+
+    color = QColor("#0284C7") if mostrar_texto else QColor("#475569")
+    pen = QPen(color, 3.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+
+    # Contorno almendrado del ojo
+    eye_path = QPainterPath()
+    eye_path.moveTo(5.0, 24.0)
+    eye_path.quadTo(24.0, 8.0, 43.0, 24.0)
+    eye_path.quadTo(24.0, 40.0, 5.0, 24.0)
+    p.drawPath(eye_path)
+
+    # Iris y pupila central
+    p.drawEllipse(QPointF(24.0, 24.0), 7.2, 7.2)
+    p.setBrush(QBrush(color))
+    p.setPen(Qt.NoPen)
+    p.drawEllipse(QPointF(24.0, 24.0), 3.0, 3.0)
+
+    # Línea diagonal de tachado cuando la contraseña está visible (modo ocultar)
+    if mostrar_texto:
+        halo_pen = QPen(QColor("#FFFFFF"), 6.8, Qt.SolidLine, Qt.RoundCap)
+        p.setPen(halo_pen)
+        p.drawLine(QPointF(10.0, 38.0), QPointF(38.0, 10.0))
+
+        slash_pen = QPen(color, 3.8, Qt.SolidLine, Qt.RoundCap)
+        p.setPen(slash_pen)
+        p.drawLine(QPointF(10.0, 38.0), QPointF(38.0, 10.0))
+
+    p.end()
+    return QIcon(pix)
 
 
 # ==============================================================================
@@ -286,6 +391,26 @@ def buscar_recurso(nombre_archivo):
     for r in posibles_rutas:
         if os.path.exists(r):
             return r
+    return None
+
+
+def cargar_logo_corporativo(nombre_archivo, max_ancho, max_alto):
+    """Carga un logotipo corporativo (WebP/PNG/JPG) escalado con antialiasing y fallback PIL."""
+    ruta = buscar_recurso(nombre_archivo)
+    if not ruta:
+        return None
+    try:
+        pix = QPixmap(ruta)
+        if pix.isNull() and PIL_DISPONIBLE:
+            img = PilImage.open(ruta).convert("RGBA")
+            w, h = img.size
+            raw = img.tobytes("raw", "RGBA")
+            qimg = QImage(raw, w, h, w * 4, QImage.Format_RGBA8888).copy()
+            pix = QPixmap.fromImage(qimg)
+        if not pix.isNull():
+            return pix.scaled(max_ancho, max_alto, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    except Exception as e:
+        print(f"Aviso cargando logo {nombre_archivo}: {e}")
     return None
 
 
@@ -1897,30 +2022,64 @@ class KostalHmiWindow(QMainWindow):
     # ==========================================================================
     def _build_splash_page(self):
         page = QWidget()
-        page.setStyleSheet(f"background-color: {COLOR_HEADER};")
+        page.setStyleSheet(f"background-color: {COLOR_BG_MAIN};")
         lay = QVBoxLayout(page)
         lay.setAlignment(Qt.AlignCenter)
 
         card = QFrame()
-        card.setFixedSize(560, 380)
+        card.setFixedSize(680, 410)
         card.setStyleSheet(
-            "QFrame { background-color: #112240; border: 2px solid #1E3A8A; border-radius: 16px; }"
+            "QFrame { background-color: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 16px; }"
         )
         clay = QVBoxLayout(card)
-        clay.setContentsMargins(32, 28, 32, 28)
+        clay.setContentsMargins(36, 30, 36, 28)
         clay.setSpacing(12)
 
-        lbl_brand = QLabel("KOSTAL")
-        lbl_brand.setAlignment(Qt.AlignCenter)
-        lbl_brand.setStyleSheet("color: #FFFFFF; font-size: 38px; font-weight: 900; letter-spacing: 4px;")
-        clay.addWidget(lbl_brand)
+        # Contenedor de Logos Corporativos Oficiales (KOSTAL & Baluarte)
+        logos_row = QHBoxLayout()
+        logos_row.setAlignment(Qt.AlignCenter)
+        logos_row.setSpacing(16)
 
-        lbl_sub = QLabel("SISTEMA INDUSTRIAL DE TAMPOGRAFÍA AUTOMATIZADA — HMI v2.0 (PySide6)")
+        pix_kostal_sp = cargar_logo_corporativo("LogoKostal.webp", 280, 58)
+        lbl_brand = QLabel()
+        lbl_brand.setStyleSheet("border: none; background: transparent;")
+        if pix_kostal_sp:
+            lbl_brand.setPixmap(pix_kostal_sp)
+        else:
+            lbl_brand.setText("KOSTAL")
+            lbl_brand.setStyleSheet(
+                f"color: {COLOR_BRAND_PRIMARY}; font-size: 36px; font-weight: 900; letter-spacing: 3px; border: none;"
+            )
+        logos_row.addWidget(lbl_brand, 0, Qt.AlignVCenter)
+
+        pix_baluarte_sp = cargar_logo_corporativo("LOGO_BALUARTE.png", 210, 50)
+        if pix_baluarte_sp:
+            div_sp = QFrame()
+            div_sp.setFixedSize(2, 48)
+            div_sp.setStyleSheet("background-color: #E2E8F0; border: none;")
+            logos_row.addWidget(div_sp, 0, Qt.AlignVCenter)
+
+            lbl_bal_sp = QLabel()
+            lbl_bal_sp.setStyleSheet("border: none; background: transparent;")
+            lbl_bal_sp.setPixmap(pix_baluarte_sp)
+            logos_row.addWidget(lbl_bal_sp, 0, Qt.AlignVCenter)
+
+        clay.addLayout(logos_row)
+        clay.addSpacing(4)
+
+        lbl_title_sp = QLabel("SMC — ESTACIÓN DE INSERCIÓN Y TAMPOGRAFÍA")
+        lbl_title_sp.setAlignment(Qt.AlignCenter)
+        lbl_title_sp.setStyleSheet(
+            f"color: {COLOR_BRAND_PRIMARY}; font-size: 17px; font-weight: 900; border: none; background: transparent;"
+        )
+        clay.addWidget(lbl_title_sp)
+
+        lbl_sub = QLabel("KOSTAL AUTOMOTIVE ELECTRICAL SYSTEMS | PROYECTOS DE INTEGRACIÓN BALUARTE")
         lbl_sub.setAlignment(Qt.AlignCenter)
-        lbl_sub.setStyleSheet("color: #38BDF8; font-size: 11px; font-weight: 700;")
+        lbl_sub.setStyleSheet("color: #475569; font-size: 11px; font-weight: 700; border: none; background: transparent;")
         clay.addWidget(lbl_sub)
 
-        clay.addSpacing(12)
+        clay.addSpacing(10)
 
         self.splash_bar = QProgressBar()
         self.splash_bar.setRange(0, 100)
@@ -1931,13 +2090,15 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_splash_status = QLabel("Inicializando subsistemas...")
         self.lbl_splash_status.setAlignment(Qt.AlignCenter)
         self.lbl_splash_status.setWordWrap(True)
-        self.lbl_splash_status.setStyleSheet("color: #E2E8F0; font-size: 13px; font-weight: 600;")
+        self.lbl_splash_status.setStyleSheet(
+            f"color: {COLOR_BRAND_PRIMARY}; font-size: 13px; font-weight: 700; border: none; background: transparent;"
+        )
         clay.addWidget(self.lbl_splash_status)
 
         clay.addStretch(1)
 
         self.splash_btn_box = QWidget()
-        self.splash_btn_box.setStyleSheet("background: transparent;")
+        self.splash_btn_box.setStyleSheet("background: transparent; border: none;")
         sblay = QHBoxLayout(self.splash_btn_box)
         sblay.setContentsMargins(0, 0, 0, 0)
         sblay.setSpacing(12)
@@ -1945,7 +2106,7 @@ class KostalHmiWindow(QMainWindow):
         btn_retry = QPushButton("Reintentar Conexión al PLC")
         btn_retry.setMinimumHeight(42)
         btn_retry.setStyleSheet(
-            f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-weight: 800; border-radius: 8px;"
+            f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-weight: 800; border-radius: 8px;"
         )
         btn_retry.clicked.connect(self._splash_retry_plc)
         sblay.addWidget(btn_retry)
@@ -1964,6 +2125,17 @@ class KostalHmiWindow(QMainWindow):
         lay.addWidget(card)
         return page
 
+    def _activate_login_page(self):
+        """Activa la vista de Login, enfoca la contraseña y despliega el teclado por defecto."""
+        self.stack.setCurrentIndex(1)
+        if hasattr(self, "inp_login_pass"):
+            QTimer.singleShot(150, self._focus_and_open_login_keyboard)
+
+    def _focus_and_open_login_keyboard(self):
+        if hasattr(self, "inp_login_pass") and self.stack.currentIndex() == 1:
+            self.inp_login_pass.setFocus()
+            abrir_teclado_tactil_windows()
+
     @Slot(int, str, bool, bool)
     def _on_splash_progress(self, pct, msg, finished, connected):
         self.splash_bar.setValue(pct)
@@ -1971,7 +2143,7 @@ class KostalHmiWindow(QMainWindow):
         if finished:
             if connected:
                 self.splash_btn_box.setVisible(False)
-                QTimer.singleShot(450, lambda: self.stack.setCurrentIndex(1))
+                QTimer.singleShot(450, self._activate_login_page)
             else:
                 self.splash_btn_box.setVisible(True)
 
@@ -1982,7 +2154,7 @@ class KostalHmiWindow(QMainWindow):
 
     def _splash_enter_Simulation(self):
         self.opc_worker.activate_Simulation_mode()
-        self.stack.setCurrentIndex(1)
+        self._activate_login_page()
 
     # ==========================================================================
     # PÁGINA 1: PANTALLA DE LOGIN INDUSTRIAL
@@ -1999,34 +2171,52 @@ class KostalHmiWindow(QMainWindow):
         top_bar.addWidget(lbl_est)
         top_bar.addStretch(1)
 
-        btn_fs = QPushButton("Pantalla Completa")
-        btn_fs.setStyleSheet("background-color: #1E293B; color: white; padding: 6px 12px;")
-        btn_fs.clicked.connect(self.alternar_pantalla_completa)
-        top_bar.addWidget(btn_fs)
+        btn_kb_top = QPushButton("Teclado")
+        btn_kb_top.setStyleSheet("background-color: #334155; color: white; padding: 6px 12px;")
+        btn_kb_top.clicked.connect(lambda: abrir_teclado_tactil_windows(forzar=True))
+        top_bar.addWidget(btn_kb_top)
 
         btn_min = QPushButton("Minimizar")
         btn_min.setStyleSheet("background-color: #475569; color: white; padding: 6px 12px;")
         btn_min.clicked.connect(self.showMinimized)
         top_bar.addWidget(btn_min)
+
+        btn_fs = QPushButton("Pantalla Completa")
+        btn_fs.setStyleSheet("background-color: #1E293B; color: white; padding: 6px 12px;")
+        btn_fs.clicked.connect(self.alternar_pantalla_completa)
+        top_bar.addWidget(btn_fs)
         lay.addLayout(top_bar)
 
         lay.addStretch(1)
 
         card = QFrame()
         card.setObjectName("IndustrialCard")
-        card.setFixedWidth(460)
+        card.setFixedWidth(500)
         clay = QVBoxLayout(card)
-        clay.setContentsMargins(32, 28, 32, 28)
+        clay.setContentsMargins(36, 30, 36, 26)
         clay.setSpacing(12)
 
-        lbl_logo = QLabel("KOSTAL")
+        # Logotipo Oficial KOSTAL (LogoKostal.webp)
+        pix_kostal_login = cargar_logo_corporativo("LogoKostal.webp", 280, 58)
+        lbl_logo = QLabel()
         lbl_logo.setAlignment(Qt.AlignCenter)
-        lbl_logo.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 34px; font-weight: 900; letter-spacing: 3px;")
+        if pix_kostal_login:
+            lbl_logo.setPixmap(pix_kostal_login)
+        else:
+            lbl_logo.setText("KOSTAL")
+            lbl_logo.setStyleSheet(
+                f"color: {COLOR_BRAND_PRIMARY}; font-size: 34px; font-weight: 900; letter-spacing: 3px;"
+            )
         clay.addWidget(lbl_logo)
 
-        lbl_title = QLabel("Control de Acceso a Estación de Tampografía")
+        lbl_sys = QLabel("SISTEMA HMI DE INSPECCIÓN")
+        lbl_sys.setAlignment(Qt.AlignCenter)
+        lbl_sys.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 18px; font-weight: 900;")
+        clay.addWidget(lbl_sys)
+
+        lbl_title = QLabel("Línea de Ensamblado & Calidad KOSTAL")
         lbl_title.setAlignment(Qt.AlignCenter)
-        lbl_title.setStyleSheet("color: #475569; font-size: 13px; font-weight: 700;")
+        lbl_title.setStyleSheet("color: #475569; font-size: 13px; font-weight: 600;")
         clay.addWidget(lbl_title)
 
         sep = QFrame()
@@ -2037,43 +2227,40 @@ class KostalHmiWindow(QMainWindow):
         clay.addWidget(QLabel("Seleccionar Usuario / Turno:"))
         self.combo_login_user = QComboBox()
         self.combo_login_user.setView(QListView())
-        self.combo_login_user.setMinimumHeight(40)
+        self.combo_login_user.setMinimumHeight(42)
         self._refresh_login_users_combo()
         clay.addWidget(self.combo_login_user)
 
         clay.addWidget(QLabel("Contraseña / PIN de Acceso:"))
-        pass_row = QHBoxLayout()
-        pass_row.setSpacing(6)
         self._login_pass_visible = False
         self.inp_login_pass = QLineEdit()
         self.inp_login_pass.setEchoMode(QLineEdit.Password)
         self.inp_login_pass.setPlaceholderText("Ingrese contraseña...")
-        self.inp_login_pass.setMinimumHeight(40)
+        self.inp_login_pass.setMinimumHeight(44)
+        self.inp_login_pass.setTextMargins(0, 0, 40, 0)
         self.inp_login_pass.returnPressed.connect(self._attempt_login)
-        pass_row.addWidget(self.inp_login_pass, 1)
 
-        self.btn_login_eye = QPushButton("VER")
-        self.btn_login_eye.setFixedSize(72, 40)
+        # Icono vectorial de ojo integrado dentro de la misma barra de input
+        in_pass_lay = QHBoxLayout(self.inp_login_pass)
+        in_pass_lay.setContentsMargins(0, 0, 6, 0)
+        in_pass_lay.setSpacing(0)
+        in_pass_lay.addStretch(1)
+
+        self.btn_login_eye = QPushButton(self.inp_login_pass)
+        self.btn_login_eye.setFixedSize(32, 32)
         self.btn_login_eye.setCursor(Qt.PointingHandCursor)
+        self.btn_login_eye.setFocusPolicy(Qt.NoFocus)
         self.btn_login_eye.setToolTip("Mostrar u ocultar contraseña")
+        self.btn_login_eye.setIcon(crear_icono_ojo(False))
+        self.btn_login_eye.setIconSize(QSize(20, 20))
         self.btn_login_eye.setStyleSheet(
-            "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 11px; font-weight: 800; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
-            "QPushButton:hover { background-color: #CBD5E1; }"
+            "QPushButton { background-color: transparent; border: none; border-radius: 6px; padding: 0px; }"
+            "QPushButton:hover { background-color: #E2E8F0; }"
         )
         self.btn_login_eye.clicked.connect(self._toggle_login_password_visibility)
-        pass_row.addWidget(self.btn_login_eye)
+        in_pass_lay.addWidget(self.btn_login_eye, 0, Qt.AlignRight | Qt.AlignVCenter)
 
-        btn_kb = QPushButton("TECLADO")
-        btn_kb.setFixedSize(78, 40)
-        btn_kb.setCursor(Qt.PointingHandCursor)
-        btn_kb.setToolTip("Abrir teclado en pantalla")
-        btn_kb.setStyleSheet(
-            "QPushButton { background-color: #E0F2FE; color: #0369A1; font-size: 11px; font-weight: 800; border: 1px solid #BAE6FD; border-radius: 7px; padding: 0px; }"
-            "QPushButton:hover { background-color: #BAE6FD; }"
-        )
-        btn_kb.clicked.connect(abrir_teclado_tactil_windows)
-        pass_row.addWidget(btn_kb)
-        clay.addLayout(pass_row)
+        clay.addWidget(self.inp_login_pass)
 
         self.lbl_login_err = QLabel("")
         self.lbl_login_err.setStyleSheet(f"color: {COLOR_ERR}; font-size: 12px; font-weight: 700;")
@@ -2088,6 +2275,21 @@ class KostalHmiWindow(QMainWindow):
         btn_enter.clicked.connect(self._attempt_login)
         clay.addWidget(btn_enter)
 
+        # Pie corporativo Baluarte (fiel a kostalcode.py)
+        pix_bal_login = cargar_logo_corporativo("LOGO_BALUARTE.png", 190, 44)
+        if pix_bal_login:
+            foot_row = QHBoxLayout()
+            foot_row.setAlignment(Qt.AlignCenter)
+            foot_row.setSpacing(10)
+            lbl_alianza = QLabel("Desarrollado en alianza con")
+            lbl_alianza.setStyleSheet("color: #64748B; font-size: 11px; font-weight: 600;")
+            foot_row.addWidget(lbl_alianza, 0, Qt.AlignVCenter)
+
+            lbl_bal_logo = QLabel()
+            lbl_bal_logo.setPixmap(pix_bal_login)
+            foot_row.addWidget(lbl_bal_logo, 0, Qt.AlignVCenter)
+            clay.addLayout(foot_row)
+
         lay.addWidget(card, 0, Qt.AlignCenter)
         lay.addStretch(1)
         return page
@@ -2096,16 +2298,17 @@ class KostalHmiWindow(QMainWindow):
         self._login_pass_visible = not getattr(self, "_login_pass_visible", False)
         if self._login_pass_visible:
             self.inp_login_pass.setEchoMode(QLineEdit.Normal)
-            self.btn_login_eye.setText("OCULTAR")
+            self.btn_login_eye.setIcon(crear_icono_ojo(True))
             self.btn_login_eye.setStyleSheet(
-                "QPushButton { background-color: #0284C7; color: #FFFFFF; font-size: 11px; font-weight: 800; border: 1px solid #0369A1; border-radius: 7px; padding: 0px; }"
+                "QPushButton { background-color: #E0F2FE; border: none; border-radius: 6px; padding: 0px; }"
+                "QPushButton:hover { background-color: #BAE6FD; }"
             )
         else:
             self.inp_login_pass.setEchoMode(QLineEdit.Password)
-            self.btn_login_eye.setText("VER")
+            self.btn_login_eye.setIcon(crear_icono_ojo(False))
             self.btn_login_eye.setStyleSheet(
-                "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 11px; font-weight: 800; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
-                "QPushButton:hover { background-color: #CBD5E1; }"
+                "QPushButton { background-color: transparent; border: none; border-radius: 6px; padding: 0px; }"
+                "QPushButton:hover { background-color: #E2E8F0; }"
             )
         self.inp_login_pass.style().unpolish(self.inp_login_pass)
         self.inp_login_pass.style().polish(self.inp_login_pass)
@@ -2128,14 +2331,15 @@ class KostalHmiWindow(QMainWindow):
         if not encontrado:
             self.lbl_login_err.setText("Contraseña incorrecta. Verifique sus credenciales.")
             return
+        ocultar_teclado_tactil_windows()
         self.lbl_login_err.setText("")
         self.inp_login_pass.clear()
         self._login_pass_visible = False
         self.inp_login_pass.setEchoMode(QLineEdit.Password)
-        self.btn_login_eye.setText("VER")
+        self.btn_login_eye.setIcon(crear_icono_ojo(False))
         self.btn_login_eye.setStyleSheet(
-            "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 11px; font-weight: 800; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
-            "QPushButton:hover { background-color: #CBD5E1; }"
+            "QPushButton { background-color: transparent; border: none; border-radius: 6px; padding: 0px; }"
+            "QPushButton:hover { background-color: #E2E8F0; }"
         )
         self.usuario_actual = dict(encontrado)
         self.sesion_segundos = 0
@@ -2161,8 +2365,13 @@ class KostalHmiWindow(QMainWindow):
         hlay.setContentsMargins(14, 6, 14, 6)
         hlay.setSpacing(10)
 
-        lbl_logo = QLabel("KOSTAL")
-        lbl_logo.setStyleSheet("color: #FFFFFF; font-size: 22px; font-weight: 900; letter-spacing: 2px;")
+        pix_kostal_hdr = cargar_logo_corporativo("LogoKostal.webp", 145, 28)
+        lbl_logo = QLabel()
+        if pix_kostal_hdr:
+            lbl_logo.setPixmap(pix_kostal_hdr)
+        else:
+            lbl_logo.setText("KOSTAL")
+            lbl_logo.setStyleSheet("color: #FFFFFF; font-size: 22px; font-weight: 900; letter-spacing: 2px;")
         hlay.addWidget(lbl_logo)
 
         self.lbl_header_estacion = QLabel(self.config.get("estacion_nombre", "EST-KOSTAL-04"))
@@ -2171,6 +2380,17 @@ class KostalHmiWindow(QMainWindow):
             "padding: 4px 8px; border-radius: 5px;"
         )
         hlay.addWidget(self.lbl_header_estacion)
+
+        pix_bal_hdr = cargar_logo_corporativo("LOGO_BALUARTE.png", 130, 32)
+        if pix_bal_hdr:
+            bal_badge = QFrame()
+            bal_badge.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
+            bal_lay = QHBoxLayout(bal_badge)
+            bal_lay.setContentsMargins(8, 2, 8, 2)
+            lbl_bal_hdr = QLabel()
+            lbl_bal_hdr.setPixmap(pix_bal_hdr)
+            bal_lay.addWidget(lbl_bal_hdr)
+            hlay.addWidget(bal_badge)
 
         hlay.addStretch(1)
 
@@ -3817,7 +4037,7 @@ class KostalHmiWindow(QMainWindow):
                 "warn",
             )
             return
-        self.stack.setCurrentIndex(1)
+        self._activate_login_page()
 
     def _open_admin_panel(self):
         rol = self.usuario_actual.get("rol", "OPERADOR").upper()
@@ -3849,11 +4069,29 @@ class KostalHmiWindow(QMainWindow):
         hdr.setFixedHeight(54)
         hlay = QHBoxLayout(hdr)
         hlay.setContentsMargins(16, 6, 16, 6)
+        hlay.setSpacing(12)
 
-        lbl_t = QLabel("KOSTAL — PANEL DE INGENIERÍA Y ADMINISTRACIÓN")
+        pix_kostal_adm = cargar_logo_corporativo("LogoKostal.webp", 140, 28)
+        if pix_kostal_adm:
+            lbl_k_adm = QLabel()
+            lbl_k_adm.setPixmap(pix_kostal_adm)
+            hlay.addWidget(lbl_k_adm)
+
+        lbl_t = QLabel("PANEL DE INGENIERÍA Y ADMINISTRACIÓN")
         lbl_t.setStyleSheet("color: #FFFFFF; font-size: 16px; font-weight: 900;")
         hlay.addWidget(lbl_t)
         hlay.addStretch(1)
+
+        pix_bal_adm = cargar_logo_corporativo("LOGO_BALUARTE.png", 130, 32)
+        if pix_bal_adm:
+            bal_adm_badge = QFrame()
+            bal_adm_badge.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
+            bal_adm_lay = QHBoxLayout(bal_adm_badge)
+            bal_adm_lay.setContentsMargins(8, 2, 8, 2)
+            lbl_bal_adm = QLabel()
+            lbl_bal_adm.setPixmap(pix_bal_adm)
+            bal_adm_lay.addWidget(lbl_bal_adm)
+            hlay.addWidget(bal_adm_badge)
 
         btn_back = QPushButton("Volver a Pantalla de Operación")
         btn_back.setFixedHeight(34)
@@ -4449,6 +4687,9 @@ def main():
     light_pal.setColor(QPalette.Highlight, QColor("#E0F2FE"))
     light_pal.setColor(QPalette.HighlightedText, QColor("#0369A1"))
     app.setPalette(light_pal)
+
+    kb_filter = _AutoTouchKeyboardFilter(app)
+    app.installEventFilter(kb_filter)
 
     window = KostalHmiWindow()
     window.show()
