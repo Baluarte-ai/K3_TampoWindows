@@ -19,10 +19,12 @@ lógica interna:
 
 import sys
 import os
+import csv
 import time
 import json
 import math
 import socket
+import sqlite3
 import datetime
 import subprocess
 import threading
@@ -414,18 +416,8 @@ def cargar_logo_corporativo(nombre_archivo, max_ancho, max_alto):
     return None
 
 
-def cargar_configuracion_disco():
-    cfg = json.loads(json.dumps(CONFIG_DEFAULT))
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                datos = json.load(f)
-                if isinstance(datos, dict):
-                    cfg.update(datos)
-        except Exception as e:
-            print(f"Error leyendo {CONFIG_FILE}: {e}")
-    # Normalizar recetas (soportando ambos formatos de llaves en config_hmi.json)
-    for idx, rec in enumerate(cfg.get("recetas", []), start=1):
+def _normalizar_lista_recetas(recetas):
+    for idx, rec in enumerate(recetas, start=1):
         rec["filas"] = max(1, min(5, int(rec.get("filas", 3))))
         cols_val = rec.get("cols", rec.get("columnas", 5))
         rec["cols"] = max(1, min(5, int(cols_val)))
@@ -451,18 +443,950 @@ def cargar_configuracion_disco():
         cal_val = bool(rec.get("cero_calibrado", rec.get("set_0_listo", True)))
         rec["cero_calibrado"] = cal_val
         rec["set_0_listo"] = cal_val
+    return recetas
+
+
+# ==============================================================================
+# GESTOR DE BASE DE DATOS LOCAL SQLITE + GENERACIÓN AUTOMÁTICA DE EXCEL / CSV
+# (Preparado para conexión directa con Base de Datos y Dashboard Corporativo)
+# ==============================================================================
+DB_DIR = os.path.join(BASE_DIR, "BaseDatos_KOSTAL")
+DB_FILE = os.path.join(DB_DIR, "kostal_produccion.db")
+REPORTES_DIR = os.path.join(BASE_DIR, "Reportes_Produccion")
+EXCEL_MAESTRO_FILE = os.path.join(REPORTES_DIR, "Reporte_Maestro_KOSTAL.xlsx")
+
+
+class KostalDatabaseManager:
+    """
+    Base de datos relacional local (SQLite en modo WAL concurrente) y motor de
+    generación automática de libros Excel (.xlsx) y espejos CSV para integración
+    con el Dashboard / ERP corporativo de KOSTAL.
+    """
+
+    def __init__(self, db_path=DB_FILE, reportes_dir=REPORTES_DIR):
+        self.db_path = db_path
+        self.db_dir = os.path.dirname(db_path)
+        self.reportes_dir = reportes_dir
+        self._lock = threading.RLock()
+        os.makedirs(self.db_dir, exist_ok=True)
+        os.makedirs(self.reportes_dir, exist_ok=True)
+        self._init_schema()
+
+    def _connect(self):
+        conn = sqlite3.connect(self.db_path, timeout=15.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA foreign_keys=ON;")
+        return conn
+
+    def _init_schema(self):
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    conn.executescript(
+                        """
+                        CREATE TABLE IF NOT EXISTS recetas_programas (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            nombre TEXT UNIQUE NOT NULL,
+                            pieza TEXT NOT NULL,
+                            modelo TEXT NOT NULL,
+                            filas INTEGER NOT NULL DEFAULT 3,
+                            columnas INTEGER NOT NULL DEFAULT 5,
+                            piezas_por_jig INTEGER NOT NULL DEFAULT 15,
+                            delta_x REAL NOT NULL DEFAULT 20.0,
+                            delta_y REAL NOT NULL DEFAULT 35.0,
+                            cero_x REAL NOT NULL DEFAULT 0.0,
+                            cero_y REAL NOT NULL DEFAULT 0.0,
+                            cero_calibrado INTEGER NOT NULL DEFAULT 1,
+                            velocidad REAL NOT NULL DEFAULT 100.0,
+                            imagen TEXT DEFAULT '',
+                            actualizado_en TEXT NOT NULL
+                        );
+
+                        CREATE TABLE IF NOT EXISTS informes_horarios (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            fecha_hora TEXT NOT NULL,
+                            fecha TEXT NOT NULL,
+                            hora TEXT NOT NULL,
+                            estacion TEXT NOT NULL,
+                            usuario TEXT NOT NULL,
+                            rol TEXT NOT NULL DEFAULT 'OPERADOR',
+                            receta TEXT NOT NULL,
+                            pieza TEXT NOT NULL DEFAULT '',
+                            modelo TEXT NOT NULL DEFAULT '',
+                            total_piezas INTEGER NOT NULL DEFAULT 0,
+                            piezas_ok INTEGER NOT NULL DEFAULT 0,
+                            piezas_nok INTEGER NOT NULL DEFAULT 0,
+                            calidad_pct REAL NOT NULL DEFAULT 100.0,
+                            tiempo_sesion TEXT NOT NULL DEFAULT '00:00:00'
+                        );
+
+                        CREATE TABLE IF NOT EXISTS ciclos_produccion (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            fecha_hora TEXT NOT NULL,
+                            fecha TEXT NOT NULL,
+                            hora TEXT NOT NULL,
+                            estacion TEXT NOT NULL,
+                            usuario TEXT NOT NULL,
+                            receta TEXT NOT NULL,
+                            pieza TEXT NOT NULL DEFAULT '',
+                            modelo TEXT NOT NULL DEFAULT '',
+                            piezas_ciclo INTEGER NOT NULL DEFAULT 0,
+                            acumulado_total INTEGER NOT NULL DEFAULT 0,
+                            acumulado_ok INTEGER NOT NULL DEFAULT 0,
+                            acumulado_nok INTEGER NOT NULL DEFAULT 0,
+                            calidad_pct REAL NOT NULL DEFAULT 100.0
+                        );
+
+                        CREATE TABLE IF NOT EXISTS kpi_tiempo_real (
+                            estacion TEXT PRIMARY KEY,
+                            actualizado_en TEXT NOT NULL,
+                            usuario_activo TEXT NOT NULL,
+                            rol_activo TEXT NOT NULL,
+                            receta_activa TEXT NOT NULL,
+                            pieza_activa TEXT NOT NULL,
+                            modelo_activo TEXT NOT NULL,
+                            piezas_realizadas_lote INTEGER NOT NULL DEFAULT 0,
+                            piezas_por_jig INTEGER NOT NULL DEFAULT 1,
+                            produccion_total INTEGER NOT NULL DEFAULT 0,
+                            produccion_ok INTEGER NOT NULL DEFAULT 0,
+                            produccion_nok INTEGER NOT NULL DEFAULT 0,
+                            calidad_pct REAL NOT NULL DEFAULT 100.0,
+                            estado_operacion TEXT NOT NULL DEFAULT 'LISTO',
+                            plc_conectado INTEGER NOT NULL DEFAULT 0
+                        );
+
+                        CREATE TABLE IF NOT EXISTS usuarios_sistema (
+                            num_empleado TEXT PRIMARY KEY,
+                            nombre TEXT NOT NULL,
+                            rol TEXT NOT NULL,
+                            password TEXT NOT NULL,
+                            actualizado_en TEXT NOT NULL
+                        );
+                        """
+                    )
+            except Exception as e:
+                print(f"Error inicializando esquema SQLite ({self.db_path}): {e}")
+
+    def sincronizar_al_cargar(self, cfg: dict) -> dict:
+        """
+        Sincroniza bidireccionalmente la configuración en disco (config_hmi.json)
+        con la base de datos SQLite local al arrancar la aplicación.
+        Si existen programas o informes en SQLite que no estaban en JSON, los restaura;
+        y persiste todos los programas/usuarios/informes actuales en SQLite y Excel.
+        """
+        with self._lock:
+            ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                with self._connect() as conn:
+                    # 1. Recetas / Programas
+                    rows_rec = conn.execute(
+                        "SELECT * FROM recetas_programas ORDER BY id ASC"
+                    ).fetchall()
+                    recetas_json = cfg.get("recetas", [])
+                    mapa_json = {
+                        str(r.get("nombre", "")).strip(): r
+                        for r in recetas_json
+                        if str(r.get("nombre", "")).strip()
+                    }
+
+                    # Recuperar recetas que estén en SQLite y falten en JSON
+                    for row in rows_rec:
+                        nom = row["nombre"]
+                        if nom not in mapa_json:
+                            rec_db = {
+                                "nombre": nom,
+                                "pieza": row["pieza"],
+                                "modelo": row["modelo"],
+                                "filas": int(row["filas"]),
+                                "cols": int(row["columnas"]),
+                                "columnas": int(row["columnas"]),
+                                "piezas": int(row["piezas_por_jig"]),
+                                "piezas_por_jig": int(row["piezas_por_jig"]),
+                                "delta_x": float(row["delta_x"]),
+                                "espacio_x": float(row["delta_x"]),
+                                "delta_y": float(row["delta_y"]),
+                                "espacio_y": float(row["delta_y"]),
+                                "cero_guardado_x": float(row["cero_x"]),
+                                "cero_x": float(row["cero_x"]),
+                                "cero_guardado_y": float(row["cero_y"]),
+                                "cero_y": float(row["cero_y"]),
+                                "cero_calibrado": bool(row["cero_calibrado"]),
+                                "set_0_listo": bool(row["cero_calibrado"]),
+                                "velocidad": float(row["velocidad"]),
+                                "vel_x": float(row["velocidad"]),
+                                "vel_y": float(row["velocidad"]),
+                                "imagen": row["imagen"] or "pieza_default.png",
+                            }
+                            recetas_json.append(rec_db)
+                            mapa_json[nom] = rec_db
+
+                    cfg["recetas"] = _normalizar_lista_recetas(recetas_json)
+
+                    # Guardar todas las recetas normalizadas en SQLite
+                    self._upsert_recetas_conn(conn, cfg["recetas"], ahora)
+
+                    # 2. Usuarios del sistema
+                    rows_usr = conn.execute(
+                        "SELECT * FROM usuarios_sistema ORDER BY num_empleado ASC"
+                    ).fetchall()
+                    usrs_json = cfg.get("usuarios", [])
+                    mapa_usr = {
+                        str(u.get("num") or u.get("user") or "").strip(): u
+                        for u in usrs_json
+                        if str(u.get("num") or u.get("user") or "").strip()
+                    }
+                    for row in rows_usr:
+                        uid = row["num_empleado"]
+                        if uid not in mapa_usr:
+                            u_db = {
+                                "num": uid,
+                                "user": uid,
+                                "nombre": row["nombre"],
+                                "rol": row["rol"],
+                                "pass": row["password"],
+                            }
+                            usrs_json.append(u_db)
+                            mapa_usr[uid] = u_db
+                    cfg["usuarios"] = usrs_json
+                    self._upsert_usuarios_conn(conn, cfg["usuarios"], ahora)
+
+                    # 3. Historial de informes horarios
+                    rows_inf = conn.execute(
+                        "SELECT * FROM informes_horarios ORDER BY id ASC"
+                    ).fetchall()
+                    hist_json = cfg.get("historial_horas", [])
+                    firmas_db = {
+                        (r["fecha_hora"], r["usuario"], r["receta"], int(r["total_piezas"]))
+                        for r in rows_inf
+                    }
+                    estacion = cfg.get("estacion_nombre", "EST-KOSTAL-04")
+                    for item in hist_json:
+                        fh = str(item.get("fecha", ahora))
+                        usr = str(item.get("usuario", "Operador"))
+                        rec_nom = str(item.get("receta", ""))
+                        tot = int(item.get("total", 0))
+                        ok_v = int(item.get("ok", 0))
+                        nok_v = int(item.get("nok", 0))
+                        cal_str = str(item.get("calidad", "100.0%")).replace("%", "").strip()
+                        try:
+                            cal_f = float(cal_str)
+                        except ValueError:
+                            cal_f = 100.0
+                        if (fh, usr, rec_nom, tot) not in firmas_db:
+                            partes = fh.split(" ")
+                            f_str = partes[0] if partes else fh[:10]
+                            h_str = partes[1] if len(partes) > 1 else "00:00:00"
+                            rec_obj = mapa_json.get(rec_nom, {})
+                            conn.execute(
+                                """
+                                INSERT INTO informes_horarios (
+                                    fecha_hora, fecha, hora, estacion, usuario, rol,
+                                    receta, pieza, modelo, total_piezas, piezas_ok,
+                                    piezas_nok, calidad_pct, tiempo_sesion
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    fh,
+                                    f_str,
+                                    h_str,
+                                    estacion,
+                                    usr,
+                                    str(item.get("rol", "OPERADOR")),
+                                    rec_nom,
+                                    str(rec_obj.get("pieza", "")),
+                                    str(rec_obj.get("modelo", "")),
+                                    tot,
+                                    ok_v,
+                                    nok_v,
+                                    cal_f,
+                                    str(item.get("tiempo_sesion", "00:00:00")),
+                                ),
+                            )
+                            firmas_db.add((fh, usr, rec_nom, tot))
+
+                    # Reconstruir historial_horas completo desde SQLite para mantener sincronía total
+                    rows_inf_all = conn.execute(
+                        "SELECT * FROM informes_horarios ORDER BY id ASC"
+                    ).fetchall()
+                    cfg["historial_horas"] = [
+                        {
+                            "id": r["id"],
+                            "fecha": r["fecha_hora"],
+                            "estacion": r["estacion"],
+                            "usuario": r["usuario"],
+                            "rol": r["rol"],
+                            "receta": r["receta"],
+                            "pieza": r["pieza"],
+                            "modelo": r["modelo"],
+                            "total": int(r["total_piezas"]),
+                            "ok": int(r["piezas_ok"]),
+                            "nok": int(r["piezas_nok"]),
+                            "calidad": f"{float(r['calidad_pct']):.1f}%",
+                            "tiempo_sesion": r["tiempo_sesion"],
+                        }
+                        for r in rows_inf_all
+                    ]
+                    conn.commit()
+            except Exception as e:
+                print(f"Aviso en sincronizar_al_cargar SQLite: {e}")
+
+            # Generar archivos Excel y CSV iniciales para que siempre existan en disco
+            self.exportar_excel_y_csv_automatico(cfg)
+            return cfg
+
+    def _upsert_recetas_conn(self, conn, recetas, ahora):
+        nombres_vigentes = []
+        for rec in recetas:
+            nom = str(rec.get("nombre", "")).strip()
+            if not nom:
+                continue
+            nombres_vigentes.append(nom)
+            pieza = str(rec.get("pieza", "Pieza"))
+            modelo = str(rec.get("modelo", "M1"))
+            filas = max(1, min(5, int(rec.get("filas", 3))))
+            cols = max(1, min(5, int(rec.get("columnas", rec.get("cols", 5)))))
+            pz = obtener_piezas_por_jig_receta(rec)
+            dx = float(rec.get("espacio_x", rec.get("delta_x", 20.0)))
+            dy = float(rec.get("espacio_y", rec.get("delta_y", 35.0)))
+            cx = limitar_coord_x(rec.get("cero_x", rec.get("cero_guardado_x", 0.0)))
+            cy = limitar_coord_y(rec.get("cero_y", rec.get("cero_guardado_y", 0.0)))
+            cal = 1 if bool(rec.get("set_0_listo", rec.get("cero_calibrado", True))) else 0
+            vel = float(rec.get("vel_x", rec.get("velocidad", 100.0)))
+            img = str(rec.get("imagen", "pieza_default.png"))
+            conn.execute(
+                """
+                INSERT INTO recetas_programas (
+                    nombre, pieza, modelo, filas, columnas, piezas_por_jig,
+                    delta_x, delta_y, cero_x, cero_y, cero_calibrado,
+                    velocidad, imagen, actualizado_en
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(nombre) DO UPDATE SET
+                    pieza=excluded.pieza,
+                    modelo=excluded.modelo,
+                    filas=excluded.filas,
+                    columnas=excluded.columnas,
+                    piezas_por_jig=excluded.piezas_por_jig,
+                    delta_x=excluded.delta_x,
+                    delta_y=excluded.delta_y,
+                    cero_x=excluded.cero_x,
+                    cero_y=excluded.cero_y,
+                    cero_calibrado=excluded.cero_calibrado,
+                    velocidad=excluded.velocidad,
+                    imagen=excluded.imagen,
+                    actualizado_en=excluded.actualizado_en
+                """,
+                (nom, pieza, modelo, filas, cols, pz, dx, dy, cx, cy, cal, vel, img, ahora),
+            )
+        if nombres_vigentes:
+            placeholders = ",".join("?" for _ in nombres_vigentes)
+            conn.execute(
+                f"DELETE FROM recetas_programas WHERE nombre NOT IN ({placeholders})",
+                tuple(nombres_vigentes),
+            )
+
+    def _upsert_usuarios_conn(self, conn, usuarios, ahora):
+        ids_vigentes = []
+        for idx, u in enumerate(usuarios, start=1):
+            uid = str(u.get("num") or u.get("user") or f"KOSTAL-{idx:04d}").strip()
+            ids_vigentes.append(uid)
+            nom = str(u.get("nombre", uid))
+            rol = str(u.get("rol", "OPERADOR")).upper()
+            pwd = str(u.get("pass", "1234"))
+            conn.execute(
+                """
+                INSERT INTO usuarios_sistema (num_empleado, nombre, rol, password, actualizado_en)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(num_empleado) DO UPDATE SET
+                    nombre=excluded.nombre,
+                    rol=excluded.rol,
+                    password=excluded.password,
+                    actualizado_en=excluded.actualizado_en
+                """,
+                (uid, nom, rol, pwd, ahora),
+            )
+        if ids_vigentes:
+            placeholders = ",".join("?" for _ in ids_vigentes)
+            conn.execute(
+                f"DELETE FROM usuarios_sistema WHERE num_empleado NOT IN ({placeholders})",
+                tuple(ids_vigentes),
+            )
+
+    def sincronizar_configuracion(self, cfg: dict):
+        """Guarda recetas, usuarios y KPIs actuales en SQLite y actualiza los archivos Excel/CSV."""
+        with self._lock:
+            ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                with self._connect() as conn:
+                    self._upsert_recetas_conn(conn, cfg.get("recetas", []), ahora)
+                    self._upsert_usuarios_conn(conn, cfg.get("usuarios", []), ahora)
+                    conn.commit()
+            except Exception as e:
+                print(f"Error en sincronizar_configuracion SQLite: {e}")
+            self.exportar_excel_y_csv_automatico(cfg)
+
+    def actualizar_kpi_tiempo_real(
+        self,
+        cfg: dict,
+        usuario_actual: dict = None,
+        piezas_realizadas_lote: int = 0,
+        piezas_por_jig: int = 1,
+        estado_operacion: str = "LISTO",
+        plc_conectado: bool = False,
+        exportar_archivos: bool = False,
+    ):
+        """Actualiza la tabla kpi_tiempo_real para monitoreo en vivo desde el Dashboard de planta."""
+        with self._lock:
+            ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            estacion = str(cfg.get("estacion_nombre", "EST-KOSTAL-04"))
+            usr_nom = str((usuario_actual or {}).get("nombre", "Operador"))
+            usr_rol = str((usuario_actual or {}).get("rol", "OPERADOR"))
+            rec_nom = str(cfg.get("receta_activa", ""))
+            rec_obj = next(
+                (r for r in cfg.get("recetas", []) if r.get("nombre") == rec_nom),
+                {},
+            )
+            pieza = str(rec_obj.get("pieza", "-"))
+            modelo = str(rec_obj.get("modelo", "-"))
+            tot = int(cfg.get("produccion_total", 0))
+            nok = int(cfg.get("produccion_nok", 0))
+            ok = max(0, tot - nok)
+            cal = round((ok / tot * 100.0), 1) if tot > 0 else 100.0
+
+            try:
+                with self._connect() as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO kpi_tiempo_real (
+                            estacion, actualizado_en, usuario_activo, rol_activo,
+                            receta_activa, pieza_activa, modelo_activo,
+                            piezas_realizadas_lote, piezas_por_jig,
+                            produccion_total, produccion_ok, produccion_nok,
+                            calidad_pct, estado_operacion, plc_conectado
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(estacion) DO UPDATE SET
+                            actualizado_en=excluded.actualizado_en,
+                            usuario_activo=excluded.usuario_activo,
+                            rol_activo=excluded.rol_activo,
+                            receta_activa=excluded.receta_activa,
+                            pieza_activa=excluded.pieza_activa,
+                            modelo_activo=excluded.modelo_activo,
+                            piezas_realizadas_lote=excluded.piezas_realizadas_lote,
+                            piezas_por_jig=excluded.piezas_por_jig,
+                            produccion_total=excluded.produccion_total,
+                            produccion_ok=excluded.produccion_ok,
+                            produccion_nok=excluded.produccion_nok,
+                            calidad_pct=excluded.calidad_pct,
+                            estado_operacion=excluded.estado_operacion,
+                            plc_conectado=excluded.plc_conectado
+                        """,
+                        (
+                            estacion,
+                            ahora,
+                            usr_nom,
+                            usr_rol,
+                            rec_nom,
+                            pieza,
+                            modelo,
+                            int(piezas_realizadas_lote),
+                            max(1, int(piezas_por_jig)),
+                            tot,
+                            ok,
+                            nok,
+                            cal,
+                            str(estado_operacion),
+                            1 if plc_conectado else 0,
+                        ),
+                    )
+                    conn.commit()
+            except Exception as e:
+                print(f"Error actualizando kpi_tiempo_real: {e}")
+
+            if exportar_archivos:
+                self.exportar_excel_y_csv_automatico(cfg)
+
+    def registrar_ciclo_produccion(
+        self,
+        cfg: dict,
+        usuario_actual: dict,
+        piezas_ciclo: int,
+        acumulado_total: int,
+        acumulado_ok: int,
+        acumulado_nok: int,
+    ):
+        """Registra automáticamente cada ciclo completo de Jig en SQLite y actualiza el Excel."""
+        with self._lock:
+            dt = datetime.datetime.now()
+            fh = dt.strftime("%Y-%m-%d %H:%M:%S")
+            f_str = dt.strftime("%Y-%m-%d")
+            h_str = dt.strftime("%H:%M:%S")
+            estacion = str(cfg.get("estacion_nombre", "EST-KOSTAL-04"))
+            usr_nom = str((usuario_actual or {}).get("nombre", "Operador"))
+            rec_nom = str(cfg.get("receta_activa", ""))
+            rec_obj = next(
+                (r for r in cfg.get("recetas", []) if r.get("nombre") == rec_nom),
+                {},
+            )
+            pieza = str(rec_obj.get("pieza", "-"))
+            modelo = str(rec_obj.get("modelo", "-"))
+            cal = (
+                round((acumulado_ok / acumulado_total * 100.0), 1)
+                if acumulado_total > 0
+                else 100.0
+            )
+            try:
+                with self._connect() as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO ciclos_produccion (
+                            fecha_hora, fecha, hora, estacion, usuario,
+                            receta, pieza, modelo, piezas_ciclo,
+                            acumulado_total, acumulado_ok, acumulado_nok, calidad_pct
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            fh,
+                            f_str,
+                            h_str,
+                            estacion,
+                            usr_nom,
+                            rec_nom,
+                            pieza,
+                            modelo,
+                            int(piezas_ciclo),
+                            int(acumulado_total),
+                            int(acumulado_ok),
+                            int(acumulado_nok),
+                            cal,
+                        ),
+                    )
+                    conn.commit()
+            except Exception as e:
+                print(f"Error registrando ciclo en SQLite: {e}")
+
+            self.actualizar_kpi_tiempo_real(
+                cfg,
+                usuario_actual=usuario_actual,
+                piezas_realizadas_lote=piezas_ciclo,
+                piezas_por_jig=piezas_ciclo,
+                estado_operacion="CICLO_COMPLETADO",
+                exportar_archivos=True,
+            )
+
+    def registrar_informe_horario(
+        self,
+        cfg: dict,
+        usuario_actual: dict,
+        total_piezas: int,
+        piezas_ok: int,
+        piezas_nok: int,
+        calidad_pct: float,
+        tiempo_sesion: str = "00:00:00",
+    ) -> dict:
+        """Inserta un corte de fin de hora en SQLite, sincroniza historial_horas y regenera el Excel."""
+        with self._lock:
+            dt = datetime.datetime.now()
+            fh = dt.strftime("%Y-%m-%d %H:%M:%S")
+            f_str = dt.strftime("%Y-%m-%d")
+            h_str = dt.strftime("%H:%M:%S")
+            estacion = str(cfg.get("estacion_nombre", "EST-KOSTAL-04"))
+            usr_nom = str((usuario_actual or {}).get("nombre", "Operador"))
+            usr_rol = str((usuario_actual or {}).get("rol", "OPERADOR"))
+            rec_nom = str(cfg.get("receta_activa", ""))
+            rec_obj = next(
+                (r for r in cfg.get("recetas", []) if r.get("nombre") == rec_nom),
+                {},
+            )
+            pieza = str(rec_obj.get("pieza", "-"))
+            modelo = str(rec_obj.get("modelo", "-"))
+
+            registro = {
+                "fecha": fh,
+                "estacion": estacion,
+                "usuario": usr_nom,
+                "rol": usr_rol,
+                "receta": rec_nom,
+                "pieza": pieza,
+                "modelo": modelo,
+                "total": int(total_piezas),
+                "ok": int(piezas_ok),
+                "nok": int(piezas_nok),
+                "calidad": f"{float(calidad_pct):.1f}%",
+                "tiempo_sesion": tiempo_sesion,
+            }
+            try:
+                with self._connect() as conn:
+                    cur = conn.execute(
+                        """
+                        INSERT INTO informes_horarios (
+                            fecha_hora, fecha, hora, estacion, usuario, rol,
+                            receta, pieza, modelo, total_piezas, piezas_ok,
+                            piezas_nok, calidad_pct, tiempo_sesion
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            fh,
+                            f_str,
+                            h_str,
+                            estacion,
+                            usr_nom,
+                            usr_rol,
+                            rec_nom,
+                            pieza,
+                            modelo,
+                            int(total_piezas),
+                            int(piezas_ok),
+                            int(piezas_nok),
+                            float(calidad_pct),
+                            tiempo_sesion,
+                        ),
+                    )
+                    registro["id"] = cur.lastrowid
+                    conn.commit()
+            except Exception as e:
+                print(f"Error guardando informe horario en SQLite: {e}")
+
+            cfg.setdefault("historial_horas", []).append(registro)
+            self.actualizar_kpi_tiempo_real(
+                cfg,
+                usuario_actual=usuario_actual,
+                estado_operacion="CORTE_HORARIO",
+                exportar_archivos=True,
+            )
+            return registro
+
+    def limpiar_historial_informes(self, cfg: dict):
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    conn.execute("DELETE FROM informes_horarios")
+                    conn.execute("DELETE FROM ciclos_produccion")
+                    conn.commit()
+            except Exception as e:
+                print(f"Error limpiando historial en SQLite: {e}")
+            self.exportar_excel_y_csv_automatico(cfg)
+
+    def exportar_excel_y_csv_automatico(self, cfg: dict = None, ruta_destino_extra: str = None):
+        """
+        Genera y actualiza automáticamente:
+        1. Reportes_Produccion/Reporte_Maestro_KOSTAL.xlsx (con 4 pestañas estructuradas)
+        2. Reportes_Produccion/Reporte_Diario_YYYY-MM-DD.xlsx
+        3. Archivos CSV espejo en BaseDatos_KOSTAL/ para ingesta directa por ERP/BI.
+        """
+        with self._lock:
+            try:
+                with self._connect() as conn:
+                    informes = [
+                        dict(r)
+                        for r in conn.execute(
+                            "SELECT * FROM informes_horarios ORDER BY id DESC"
+                        ).fetchall()
+                    ]
+                    ciclos = [
+                        dict(r)
+                        for r in conn.execute(
+                            "SELECT * FROM ciclos_produccion ORDER BY id DESC LIMIT 1000"
+                        ).fetchall()
+                    ]
+                    recetas = [
+                        dict(r)
+                        for r in conn.execute(
+                            "SELECT * FROM recetas_programas ORDER BY id ASC"
+                        ).fetchall()
+                    ]
+                    kpis = [
+                        dict(r)
+                        for r in conn.execute(
+                            "SELECT * FROM kpi_tiempo_real ORDER BY estacion ASC"
+                        ).fetchall()
+                    ]
+            except Exception as e:
+                print(f"Error consultando SQLite para exportación: {e}")
+                return False
+
+            # 1. Guardar espejos CSV (universales para PowerBI / SQL / Grafana)
+            self._write_csv_mirror(
+                os.path.join(self.db_dir, "informes_horarios.csv"),
+                [
+                    "id", "fecha_hora", "fecha", "hora", "estacion", "usuario", "rol",
+                    "receta", "pieza", "modelo", "total_piezas", "piezas_ok",
+                    "piezas_nok", "calidad_pct", "tiempo_sesion",
+                ],
+                informes,
+            )
+            self._write_csv_mirror(
+                os.path.join(self.db_dir, "ciclos_produccion.csv"),
+                [
+                    "id", "fecha_hora", "fecha", "hora", "estacion", "usuario",
+                    "receta", "pieza", "modelo", "piezas_ciclo", "acumulado_total",
+                    "acumulado_ok", "acumulado_nok", "calidad_pct",
+                ],
+                ciclos,
+            )
+            self._write_csv_mirror(
+                os.path.join(self.db_dir, "catalogo_programas.csv"),
+                [
+                    "id", "nombre", "pieza", "modelo", "filas", "columnas",
+                    "piezas_por_jig", "delta_x", "delta_y", "cero_x", "cero_y",
+                    "cero_calibrado", "velocidad", "imagen", "actualizado_en",
+                ],
+                recetas,
+            )
+            self._write_csv_mirror(
+                os.path.join(self.db_dir, "kpi_tiempo_real.csv"),
+                [
+                    "estacion", "actualizado_en", "usuario_activo", "rol_activo",
+                    "receta_activa", "pieza_activa", "modelo_activo",
+                    "piezas_realizadas_lote", "piezas_por_jig", "produccion_total",
+                    "produccion_ok", "produccion_nok", "calidad_pct",
+                    "estado_operacion", "plc_conectado",
+                ],
+                kpis,
+            )
+
+            if not OPENPYXL_DISPONIBLE:
+                return True
+
+            # 2. Construir libro Excel multi-hoja con formato corporativo KOSTAL
+            try:
+                wb = openpyxl.Workbook()
+                header_font = XlFont(bold=True, color="FFFFFF", size=11)
+                header_fill = PatternFill("solid", fgColor="003A70")
+                center_align = Alignment(horizontal="center", vertical="center")
+                left_align = Alignment(horizontal="left", vertical="center")
+                thin_border = Border(
+                    left=Side(style="thin", color="CBD5E1"),
+                    right=Side(style="thin", color="CBD5E1"),
+                    top=Side(style="thin", color="CBD5E1"),
+                    bottom=Side(style="thin", color="CBD5E1"),
+                )
+
+                def _style_worksheet(ws, headers, rows_data, col_widths):
+                    ws.append(headers)
+                    ws.row_dimensions[1].height = 24
+                    for col_idx, cell in enumerate(ws[1], start=1):
+                        cell.font = header_font
+                        cell.fill = header_fill
+                        cell.alignment = center_align
+                        cell.border = thin_border
+                    for row_vals in rows_data:
+                        ws.append(row_vals)
+                    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=len(headers)):
+                        for c_idx, cell in enumerate(row):
+                            cell.alignment = center_align if c_idx not in (5, 7, 8) else left_align
+                            cell.border = thin_border
+                    for idx, width in enumerate(col_widths, start=1):
+                        col_letter = openpyxl.utils.get_column_letter(idx)
+                        ws.column_dimensions[col_letter].width = width
+
+                # Hoja 1: Informes_Horarios
+                ws_inf = wb.active
+                ws_inf.title = "Informes_Horarios"
+                headers_inf = [
+                    "ID", "Fecha / Hora", "Fecha", "Hora", "Estación", "Operador",
+                    "Rol", "Programa / Receta", "Pieza", "Modelo", "Total (Auto)",
+                    "OK (Auto)", "NO OK (Manual)", "% Calidad", "Tiempo Sesión",
+                ]
+                rows_inf = [
+                    [
+                        r.get("id", ""),
+                        r.get("fecha_hora", ""),
+                        r.get("fecha", ""),
+                        r.get("hora", ""),
+                        r.get("estacion", ""),
+                        r.get("usuario", ""),
+                        r.get("rol", ""),
+                        r.get("receta", ""),
+                        r.get("pieza", ""),
+                        r.get("modelo", ""),
+                        int(r.get("total_piezas", 0)),
+                        int(r.get("piezas_ok", 0)),
+                        int(r.get("piezas_nok", 0)),
+                        f"{float(r.get('calidad_pct', 100.0)):.1f}%",
+                        r.get("tiempo_sesion", "00:00:00"),
+                    ]
+                    for r in informes
+                ]
+                _style_worksheet(
+                    ws_inf,
+                    headers_inf,
+                    rows_inf,
+                    [8, 21, 13, 11, 16, 20, 15, 28, 24, 14, 14, 14, 16, 13, 15],
+                )
+
+                # Hoja 2: Ciclos_Automaticos
+                ws_cic = wb.create_sheet(title="Ciclos_Automaticos")
+                headers_cic = [
+                    "ID Ciclo", "Fecha / Hora", "Fecha", "Hora", "Estación", "Operador",
+                    "Programa / Receta", "Pieza", "Modelo", "Piezas Ciclo",
+                    "Acumulado Total", "Acumulado OK", "Acumulado NO OK", "% Calidad",
+                ]
+                rows_cic = [
+                    [
+                        r.get("id", ""),
+                        r.get("fecha_hora", ""),
+                        r.get("fecha", ""),
+                        r.get("hora", ""),
+                        r.get("estacion", ""),
+                        r.get("usuario", ""),
+                        r.get("receta", ""),
+                        r.get("pieza", ""),
+                        r.get("modelo", ""),
+                        int(r.get("piezas_ciclo", 0)),
+                        int(r.get("acumulado_total", 0)),
+                        int(r.get("acumulado_ok", 0)),
+                        int(r.get("acumulado_nok", 0)),
+                        f"{float(r.get('calidad_pct', 100.0)):.1f}%",
+                    ]
+                    for r in ciclos
+                ]
+                _style_worksheet(
+                    ws_cic,
+                    headers_cic,
+                    rows_cic,
+                    [10, 21, 13, 11, 16, 20, 28, 24, 14, 14, 16, 15, 17, 13],
+                )
+
+                # Hoja 3: Catalogo_Programas
+                ws_rec = wb.create_sheet(title="Catalogo_Programas")
+                headers_rec = [
+                    "ID", "Nombre del Programa / Receta", "Pieza", "Modelo",
+                    "Filas", "Columnas", "Piezas por Jig", "Dist. X (mm)",
+                    "Dist. Y (mm)", "Punto 0 X (mm)", "Punto 0 Y (mm)",
+                    "Set 0 Calibrado", "Velocidad (mm/s)", "Archivo Imagen", "Última Actualización",
+                ]
+                rows_rec = [
+                    [
+                        r.get("id", ""),
+                        r.get("nombre", ""),
+                        r.get("pieza", ""),
+                        r.get("modelo", ""),
+                        int(r.get("filas", 3)),
+                        int(r.get("columnas", 5)),
+                        int(r.get("piezas_por_jig", 15)),
+                        float(r.get("delta_x", 20.0)),
+                        float(r.get("delta_y", 35.0)),
+                        float(r.get("cero_x", 0.0)),
+                        float(r.get("cero_y", 0.0)),
+                        "SÍ" if r.get("cero_calibrado", 1) else "NO",
+                        float(r.get("velocidad", 100.0)),
+                        r.get("imagen", ""),
+                        r.get("actualizado_en", ""),
+                    ]
+                    for r in recetas
+                ]
+                _style_worksheet(
+                    ws_rec,
+                    headers_rec,
+                    rows_rec,
+                    [8, 30, 24, 14, 10, 11, 15, 14, 14, 15, 15, 16, 16, 24, 21],
+                )
+
+                # Hoja 4: KPI_Tiempo_Real
+                ws_kpi = wb.create_sheet(title="KPI_Tiempo_Real")
+                headers_kpi = [
+                    "Estación", "Última Actualización", "Usuario Activo", "Rol",
+                    "Programa Activo", "Pieza Activa", "Modelo Activo",
+                    "Piezas Lote Actual", "Capacidad Jig", "Total Acumulado",
+                    "OK Acumulado", "NO OK Acumulado", "% Calidad", "Estado", "PLC Conectado",
+                ]
+                rows_kpi = [
+                    [
+                        r.get("estacion", ""),
+                        r.get("actualizado_en", ""),
+                        r.get("usuario_activo", ""),
+                        r.get("rol_activo", ""),
+                        r.get("receta_activa", ""),
+                        r.get("pieza_activa", ""),
+                        r.get("modelo_activo", ""),
+                        int(r.get("piezas_realizadas_lote", 0)),
+                        int(r.get("piezas_por_jig", 1)),
+                        int(r.get("produccion_total", 0)),
+                        int(r.get("produccion_ok", 0)),
+                        int(r.get("produccion_nok", 0)),
+                        f"{float(r.get('calidad_pct', 100.0)):.1f}%",
+                        r.get("estado_operacion", "LISTO"),
+                        "CONECTADO" if r.get("plc_conectado", 0) else "SIMULACIÓN",
+                    ]
+                    for r in kpis
+                ]
+                _style_worksheet(
+                    ws_kpi,
+                    headers_kpi,
+                    rows_kpi,
+                    [16, 21, 20, 15, 28, 22, 14, 18, 15, 16, 15, 17, 13, 18, 16],
+                )
+
+                # Guardar Reporte Maestro y Reporte Diario
+                wb.save(EXCEL_MAESTRO_FILE)
+                fecha_hoy = datetime.datetime.now().strftime("%Y-%m-%d")
+                ruta_diaria = os.path.join(self.reportes_dir, f"Reporte_Diario_{fecha_hoy}.xlsx")
+                wb.save(ruta_diaria)
+                if ruta_destino_extra:
+                    wb.save(ruta_destino_extra)
+                return True
+            except PermissionError:
+                # Si el usuario tiene abierto el archivo Excel en pantalla, guardar copia instantánea sin bloquear
+                try:
+                    if ruta_destino_extra:
+                        wb.save(ruta_destino_extra)
+                        return True
+                except Exception:
+                    pass
+                return False
+            except Exception as e:
+                print(f"Aviso generando Excel automático: {e}")
+                return False
+
+    @staticmethod
+    def _write_csv_mirror(filepath, fieldnames, rows):
+        try:
+            with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writeheader()
+                for r in rows:
+                    writer.writerow(r)
+        except Exception:
+            pass
+
+
+DB_MANAGER = KostalDatabaseManager()
+
+
+def cargar_configuracion_disco():
+    cfg = json.loads(json.dumps(CONFIG_DEFAULT))
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+                if isinstance(datos, dict):
+                    cfg.update(datos)
+        except Exception as e:
+            print(f"Error leyendo {CONFIG_FILE}: {e}")
+    # Normalizar recetas (soportando ambos formatos de llaves en config_hmi.json)
+    cfg["recetas"] = _normalizar_lista_recetas(cfg.get("recetas", []))
     # Normalizar usuarios (soportando tanto la llave 'num' de config_hmi.json como 'user')
     for idx, u in enumerate(cfg.get("usuarios", []), start=1):
         uid = str(u.get("num") or u.get("user") or f"KOSTAL-{idx:04d}").strip()
         u["num"] = uid
         u["user"] = uid
+    # Sincronizar bidireccionalmente con la base de datos SQLite local y Excel
+    cfg = DB_MANAGER.sincronizar_al_cargar(cfg)
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=4, ensure_ascii=False)
+    except Exception:
+        pass
     return cfg
 
 
 def guardar_configuracion_disco(cfg):
     try:
+        cfg["recetas"] = _normalizar_lista_recetas(cfg.get("recetas", []))
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=4, ensure_ascii=False)
+        DB_MANAGER.sincronizar_configuracion(cfg)
         return True
     except Exception as e:
         print(f"Error guardando {CONFIG_FILE}: {e}")
@@ -3418,6 +4342,20 @@ class KostalHmiWindow(QMainWindow):
             self.opc_worker.update_production_counters(
                 self.produccion_total, self.produccion_ok, self.produccion_nok
             )
+        estado_db = (
+            "PARO_EMERGENCIA"
+            if self.estado_stop
+            else ("PINTANDO" if self.estado_pintando else ("MANUAL" if self.estado_manual else "LISTO"))
+        )
+        DB_MANAGER.actualizar_kpi_tiempo_real(
+            self.config,
+            usuario_actual=getattr(self, "usuario_actual", {}),
+            piezas_realizadas_lote=self.piezas_realizadas_lote,
+            piezas_por_jig=self.piezas_por_jig_actual,
+            estado_operacion=estado_db,
+            plc_conectado=getattr(self, "plc_conectado", False),
+            exportar_archivos=False,
+        )
 
         # Botón Principal de Pintado
         if not self.set_0_confirmado:
@@ -3702,6 +4640,14 @@ class KostalHmiWindow(QMainWindow):
             self.estado_pintando = False
             self.sim_cycle_timer.stop()
             self.opc_worker.enqueue_write("PINTAR", False)
+            DB_MANAGER.registrar_ciclo_produccion(
+                self.config,
+                self.usuario_actual,
+                self.piezas_por_jig_actual,
+                self.produccion_total,
+                self.produccion_ok,
+                self.produccion_nok,
+            )
             guardar_configuracion_disco(self.config)
             self._refresh_all_operator_ui()
             log_debug_hmi(
@@ -4016,27 +4962,31 @@ class KostalHmiWindow(QMainWindow):
         nok_manual = max(0, min(total_auto, int(nok_h)))
         ok_auto = max(0, total_auto - nok_manual)
         cal = round((ok_auto / total_auto * 100.0), 1) if total_auto > 0 else 100.0
-        registro = {
-            "fecha": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "usuario": self.usuario_actual.get("nombre", "Operador"),
-            "receta": self.config.get("receta_activa", ""),
-            "total": total_auto,
-            "ok": ok_auto,
-            "nok": nok_manual,
-            "calidad": f"{cal:.1f}%",
-        }
-        self.config.setdefault("historial_horas", []).append(registro)
         self.produccion_ok = ok_auto
         self.produccion_nok = nok_manual
         self.config["produccion_total"] = self.produccion_total
         self.config["produccion_ok"] = self.produccion_ok
         self.config["produccion_nok"] = self.produccion_nok
+        hrs = self.sesion_segundos // 3600
+        mins = (self.sesion_segundos % 3600) // 60
+        secs = self.sesion_segundos % 60
+        t_sesion = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+        DB_MANAGER.registrar_informe_horario(
+            self.config,
+            self.usuario_actual,
+            total_piezas=total_auto,
+            piezas_ok=ok_auto,
+            piezas_nok=nok_manual,
+            calidad_pct=cal,
+            tiempo_sesion=t_sesion,
+        )
         guardar_configuracion_disco(self.config)
         self._refresh_all_operator_ui()
         self._refresh_admin_stats_table()
         self.overlay.show_message(
-            "Corte de Hora Registrado",
-            f"Se guardó el registro horario: Total Automático={total_auto}, OK={ok_auto}, NO OK Manual={nok_manual} ({cal:.1f}%).",
+            "Corte de Hora Guardado en BD y Excel",
+            f"Informe registrado en la Base de Datos Local y en el Excel Maestro:\n"
+            f"Total Automático={total_auto} | OK={ok_auto} | NO OK Manual={nok_manual} ({cal:.1f}%).",
             "ok",
         )
 
@@ -4378,27 +5328,43 @@ class KostalHmiWindow(QMainWindow):
         self.adm_rec_cy.setText(f"{limitar_coord_y(self.pos_actual_y):.2f}")
 
     def _admin_new_recipe(self):
-        n = len(self.config.get("recetas", [])) + 1
+        recetas = self.config.setdefault("recetas", [])
+        n = len(recetas) + 1
+        nombre_cand = f"#{n} - Nueva Receta KOSTAL"
+        while any(r.get("nombre") == nombre_cand for r in recetas):
+            n += 1
+            nombre_cand = f"#{n} - Nueva Receta KOSTAL"
         nueva = {
-            "nombre": f"#{n} - Nueva Receta KOSTAL",
+            "nombre": nombre_cand,
             "pieza": "Nueva Pieza",
             "modelo": f"MOD-{n:02d}",
             "filas": 3,
+            "cols": 5,
             "columnas": 5,
+            "piezas": 15,
             "piezas_por_jig": 15,
+            "delta_x": 20.0,
             "espacio_x": 20.0,
+            "delta_y": 35.0,
             "espacio_y": 35.0,
+            "cero_guardado_x": 0.0,
             "cero_x": 0.0,
+            "cero_guardado_y": 0.0,
             "cero_y": 0.0,
+            "cero_calibrado": True,
             "set_0_listo": True,
+            "velocidad": 100.0,
             "vel_x": 100.0,
             "vel_y": 100.0,
             "imagen": "pieza_default.png",
         }
-        self.config.setdefault("recetas", []).append(nueva)
+        recetas.append(nueva)
+        self.config["receta_activa"] = nueva["nombre"]
         guardar_configuracion_disco(self.config)
         self._refresh_admin_recipes_list()
         self.combo_admin_rec.setCurrentText(nueva["nombre"])
+        self.adm_rec_nombre.setFocus()
+        self.adm_rec_nombre.selectAll()
 
     def _admin_delete_recipe(self):
         recetas = self.config.get("recetas", [])
@@ -4413,9 +5379,7 @@ class KostalHmiWindow(QMainWindow):
 
     def _admin_save_recipe(self):
         orig_name = self.combo_admin_rec.currentText()
-        rec = next((r for r in self.config.get("recetas", []) if r.get("nombre") == orig_name), None)
-        if not rec:
-            return
+        recetas = self.config.setdefault("recetas", [])
         try:
             f = max(1, min(5, int(float(self.adm_rec_filas.text() or 3))))
             c = max(1, min(5, int(float(self.adm_rec_cols.text() or 5))))
@@ -4429,8 +5393,8 @@ class KostalHmiWindow(QMainWindow):
             self.overlay.show_message("Error de Formato", "Verifique que los campos numéricos sean válidos.", "error")
             return
 
-        nuevo_nom = self.adm_rec_nombre.text().strip() or orig_name
-        rec.update({
+        nuevo_nom = self.adm_rec_nombre.text().strip() or orig_name or "#1 - Receta KOSTAL"
+        datos_receta = {
             "nombre": nuevo_nom,
             "pieza": self.adm_rec_pieza.text().strip() or "Pieza",
             "modelo": self.adm_rec_modelo.text().strip() or "M1",
@@ -4452,12 +5416,32 @@ class KostalHmiWindow(QMainWindow):
             "velocidad": vel,
             "vel_x": vel,
             "vel_y": vel,
-            "imagen": self.adm_rec_img.text().strip(),
-        })
+            "imagen": self.adm_rec_img.text().strip() or "pieza_default.png",
+        }
+
+        rec_existente_nuevo = next((r for r in recetas if r.get("nombre") == nuevo_nom), None)
+        rec_orig = next((r for r in recetas if r.get("nombre") == orig_name), None)
+
+        if rec_existente_nuevo is not None:
+            rec_existente_nuevo.update(datos_receta)
+            accion_msg = "actualizada"
+        elif rec_orig is not None and "Nueva Receta KOSTAL" in orig_name:
+            rec_orig.update(datos_receta)
+            accion_msg = "creada"
+        else:
+            recetas.append(datos_receta)
+            accion_msg = "creada como nuevo programa"
+
+        self.config["receta_activa"] = nuevo_nom
         guardar_configuracion_disco(self.config)
         self.cargar_receta_por_nombre(nuevo_nom, silencioso=True)
         self._refresh_admin_recipes_list()
-        self.overlay.show_message("Receta Guardada", f"La receta '{nuevo_nom}' fue actualizada y activada.", "ok")
+        self.combo_admin_rec.setCurrentText(nuevo_nom)
+        self.overlay.show_message(
+            "Programa Guardado en Base de Datos",
+            f"El programa '{nuevo_nom}' fue {accion_msg}, activado y respaldado en la Base de Datos Local y Excel Maestro.",
+            "ok",
+        )
 
     # ---------------- TAB 1: ESTADÍSTICAS Y EXPORTACIÓN EXCEL ----------------
     def _build_admin_tab_stats(self):
@@ -4469,14 +5453,23 @@ class KostalHmiWindow(QMainWindow):
 
         top = QHBoxLayout()
         top.setSpacing(10)
-        lbl = QLabel("Historial de Cortes Horarios y Reportes de Producción")
+        lbl = QLabel("Historial de Cortes Horarios y Base de Datos Local")
         lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 16px; font-weight: 900;")
         top.addWidget(lbl)
         top.addStretch(1)
 
-        btn_exp = QPushButton("Exportar Reporte a Excel (.xlsx)")
+        btn_open_dir = QPushButton("Abrir Carpeta BD / Excel")
+        btn_open_dir.setMinimumHeight(50)
+        btn_open_dir.setMinimumWidth(225)
+        btn_open_dir.setStyleSheet(
+            f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 14px; font-weight: 900; padding: 0 18px; border-radius: 8px;"
+        )
+        btn_open_dir.clicked.connect(self._open_database_and_reports_folder)
+        top.addWidget(btn_open_dir)
+
+        btn_exp = QPushButton("Exportar Copia a Excel (.xlsx)")
         btn_exp.setMinimumHeight(50)
-        btn_exp.setMinimumWidth(260)
+        btn_exp.setMinimumWidth(250)
         btn_exp.setStyleSheet(
             f"background-color: {COLOR_OK}; color: white; font-size: 14px; font-weight: 900; padding: 0 20px; border-radius: 8px;"
         )
@@ -4485,13 +5478,30 @@ class KostalHmiWindow(QMainWindow):
 
         btn_clr = QPushButton("Reiniciar Contadores")
         btn_clr.setMinimumHeight(50)
-        btn_clr.setMinimumWidth(205)
+        btn_clr.setMinimumWidth(200)
         btn_clr.setStyleSheet(
             f"background-color: {COLOR_WARN}; color: white; font-size: 14px; font-weight: 900; padding: 0 20px; border-radius: 8px;"
         )
         btn_clr.clicked.connect(self._reset_production_counters)
         top.addWidget(btn_clr)
         lay.addLayout(top)
+
+        db_info_banner = QFrame()
+        db_info_banner.setObjectName("SubSurface")
+        db_lay = QVBoxLayout(db_info_banner)
+        db_lay.setContentsMargins(12, 8, 12, 8)
+        db_lay.setSpacing(3)
+        lbl_db_path = QLabel(
+            f"BASE DE DATOS SQLITE (WAL ACTIVO PARA DASHBOARD CORPORATIVO):  {DB_FILE}"
+        )
+        lbl_db_path.setStyleSheet("color: #0F172A; font-size: 11px; font-weight: 800; font-family: Consolas;")
+        lbl_xl_path = QLabel(
+            f"REPORTE EXCEL AUTOMÁTICO EN TIEMPO REAL:                      {EXCEL_MAESTRO_FILE}"
+        )
+        lbl_xl_path.setStyleSheet("color: #0369A1; font-size: 11px; font-weight: 800; font-family: Consolas;")
+        db_lay.addWidget(lbl_db_path)
+        db_lay.addWidget(lbl_xl_path)
+        lay.addWidget(db_info_banner)
 
         self.tbl_stats = QTableWidget(0, 7)
         self.tbl_stats.setHorizontalHeaderLabels([
@@ -4501,6 +5511,19 @@ class KostalHmiWindow(QMainWindow):
         self.tbl_stats.setEditTriggers(QAbstractItemView.NoEditTriggers)
         lay.addWidget(self.tbl_stats, 1)
         return tab
+
+    def _open_database_and_reports_folder(self):
+        DB_MANAGER.exportar_excel_y_csv_automatico(self.config)
+        try:
+            if os.name == "nt":
+                os.startfile(REPORTES_DIR)
+                os.startfile(DB_DIR)
+        except Exception as e:
+            self.overlay.show_message(
+                "Rutas de Almacenamiento Local",
+                f"Base de Datos SQLite:\n{DB_FILE}\n\nReportes Excel Automáticos:\n{EXCEL_MAESTRO_FILE}\n({e})",
+                "info",
+            )
 
     def _refresh_admin_stats_table(self):
         hist = self.config.get("historial_horas", [])
@@ -4528,6 +5551,7 @@ class KostalHmiWindow(QMainWindow):
         self.config["produccion_ok"] = 0
         self.config["produccion_nok"] = 0
         self.config["historial_horas"] = []
+        DB_MANAGER.limpiar_historial_informes(self.config)
         guardar_configuracion_disco(self.config)
         self._refresh_admin_stats_table()
         self._refresh_all_operator_ui()
@@ -4537,38 +5561,25 @@ class KostalHmiWindow(QMainWindow):
         if not OPENPYXL_DISPONIBLE:
             self.overlay.show_message("Módulo Faltante", "openpyxl no está instalado en este entorno.", "warn")
             return
+        os.makedirs(REPORTES_DIR, exist_ok=True)
         fn, _ = QFileDialog.getSaveFileName(
             self,
-            "Exportar Reporte KOSTAL",
-            os.path.join(BASE_DIR, f"Reporte_KOSTAL_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"),
+            "Exportar Reporte Completo KOSTAL",
+            os.path.join(REPORTES_DIR, f"Reporte_KOSTAL_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"),
             "Excel (*.xlsx)",
         )
         if not fn:
             return
-        try:
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Produccion KOSTAL"
-            headers = ["Fecha / Hora", "Operador", "Receta / Jig", "Total", "OK", "NOK", "% Calidad"]
-            ws.append(headers)
-            for cell in ws[1]:
-                cell.font = XlFont(bold=True, color="FFFFFF")
-                cell.fill = PatternFill("solid", fgColor="003A70")
-                cell.alignment = Alignment(horizontal="center")
-            for item in self.config.get("historial_horas", []):
-                ws.append([
-                    item.get("fecha", ""),
-                    item.get("usuario", ""),
-                    item.get("receta", ""),
-                    item.get("total", 0),
-                    item.get("ok", 0),
-                    item.get("nok", 0),
-                    item.get("calidad", "100.0%"),
-                ])
-            wb.save(fn)
-            self.overlay.show_message("Exportación Exitosa", f"Reporte guardado en:\n{fn}", "ok")
-        except Exception as e:
-            self.overlay.show_message("Error al Exportar", str(e), "error")
+        ok = DB_MANAGER.exportar_excel_y_csv_automatico(self.config, ruta_destino_extra=fn)
+        if ok:
+            self.overlay.show_message(
+                "Exportación Exitosa",
+                f"Reporte multi-hoja (Informes Horarios, Ciclos Automáticos, Catálogo de Programas y KPIs) guardado en:\n{fn}\n\n"
+                f"También actualizado automáticamente en:\n{EXCEL_MAESTRO_FILE}",
+                "ok",
+            )
+        else:
+            self.overlay.show_message("Error al Exportar", "No fue posible escribir el archivo Excel seleccionado.", "error")
 
     # ---------------- TAB 2: CONTROL DE USUARIOS ----------------
     def _build_admin_tab_users(self):
