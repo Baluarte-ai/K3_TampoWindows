@@ -3765,7 +3765,17 @@ class KostalHmiWindow(QMainWindow):
         expanded = self.jog_collapsible.is_expanded
         self.btn_fold_jog.setText(self._tr("plegar") if expanded else self._tr("desplegar"))
 
+    def _es_usuario_admin(self):
+        return self.usuario_actual.get("rol", "OPERADOR").upper() in ("ADMIN", "ADMINISTRADOR")
+
     def alternar_seccion_calibracion(self):
+        if not self._es_usuario_admin():
+            self.overlay.show_message(
+                "Acceso Restringido",
+                "Solo los usuarios con rol ADMINISTRADOR están autorizados para realizar el setteo (Set 0 / Set Home).",
+                "warn",
+            )
+            return
         self.cal_collapsible.toggle()
         expanded = self.cal_collapsible.is_expanded
         self.btn_toggle_cal.setText(self._tr("calibracion_hide") if expanded else self._tr("calibracion_show"))
@@ -3864,6 +3874,13 @@ class KostalHmiWindow(QMainWindow):
         log_debug_hmi(f"Comando HOME ejecutado -> X:{self.pos_actual_x:.2f}, Y:{self.pos_actual_y:.2f}")
 
     def guardar_posicion_como_cero(self):
+        if not self._es_usuario_admin():
+            self.overlay.show_message(
+                "Acceso Restringido",
+                "Solo los usuarios con rol ADMINISTRADOR están autorizados para calibrar Set 0.",
+                "warn",
+            )
+            return
         self.cero_guardado_x = limitar_coord_x(self.pos_actual_x)
         self.cero_guardado_y = limitar_coord_y(self.pos_actual_y)
         self.set_0_confirmado = True
@@ -3892,6 +3909,13 @@ class KostalHmiWindow(QMainWindow):
         )
 
     def guardar_posicion_como_home(self):
+        if not self._es_usuario_admin():
+            self.overlay.show_message(
+                "Acceso Restringido",
+                "Solo los usuarios con rol ADMINISTRADOR están autorizados para calibrar Set Home.",
+                "warn",
+            )
+            return
         self.home_guardado_x = limitar_coord_x(self.pos_actual_x)
         self.home_guardado_y = limitar_coord_y(self.pos_actual_y)
         self.config["home_x"] = self.home_guardado_x
@@ -4037,6 +4061,18 @@ class KostalHmiWindow(QMainWindow):
         es_admin = rol in ("ADMIN", "ADMINISTRADOR")
         self.btn_header_admin.setVisible(es_admin)
         self.btn_recetario_admin_shortcut.setVisible(es_admin)
+        if hasattr(self, "btn_toggle_cal"):
+            self.btn_toggle_cal.setVisible(es_admin)
+        if hasattr(self, "cal_collapsible"):
+            if not es_admin and self.cal_collapsible.is_expanded:
+                self.cal_collapsible.toggle()
+                if hasattr(self, "btn_toggle_cal"):
+                    self.btn_toggle_cal.setText(self._tr("calibracion_show"))
+            self.cal_collapsible.setVisible(es_admin)
+        if hasattr(self, "btn_set_0"):
+            self.btn_set_0.setEnabled(es_admin)
+        if hasattr(self, "btn_set_home"):
+            self.btn_set_home.setEnabled(es_admin)
 
     def alternar_pantalla_completa(self):
         if self.isFullScreen():
