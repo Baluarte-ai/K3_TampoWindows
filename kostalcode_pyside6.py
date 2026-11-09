@@ -2452,8 +2452,16 @@ class InWindowOverlayLayer(QWidget):
         return card
 
     # 1. Alerta / Confirmación integrada
-    def show_message(self, titulo, mensaje, tipo="info", on_confirm=None):
-        card = self._prepare_card(width=480, min_height=210)
+    def show_message(
+        self,
+        titulo,
+        mensaje,
+        tipo="info",
+        on_confirm=None,
+        confirm_text="Confirmar",
+        cancel_text="Cancelar",
+    ):
+        card = self._prepare_card(width=520, min_height=230)
         lay = QVBoxLayout(card)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(12)
@@ -2463,6 +2471,7 @@ class InWindowOverlayLayer(QWidget):
             "ok": ("[OK]", COLOR_OK),
             "warn": ("[AVISO]", COLOR_WARN),
             "error": ("[ERROR]", COLOR_ERR),
+            "danger": ("[CONFIRMAR ELIMINACIÓN]", COLOR_ERR),
             "confirm": ("[CONFIRMAR]", COLOR_BRAND_PRIMARY),
         }
         ico, color_hex = col_map.get(tipo, ("[INFO]", COLOR_BRAND_PRIMARY))
@@ -2478,28 +2487,28 @@ class InWindowOverlayLayer(QWidget):
         lay.addWidget(sep)
 
         lbl_msg = QLabel(mensaje)
-        lbl_msg.setStyleSheet("color: #1E293B; font-size: 13px; font-weight: 500; background: transparent;")
+        lbl_msg.setStyleSheet("color: #1E293B; font-size: 13px; font-weight: 600; background: transparent;")
         lbl_msg.setWordWrap(True)
         lay.addWidget(lbl_msg)
 
         lay.addStretch(1)
 
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
-        if tipo == "confirm" or callable(on_confirm):
-            btn_cancel = QPushButton("Cancelar")
-            btn_cancel.setMinimumHeight(40)
+        btn_row.setSpacing(12)
+        if tipo in ("confirm", "danger") or callable(on_confirm):
+            btn_cancel = QPushButton(cancel_text)
+            btn_cancel.setMinimumHeight(48)
             btn_cancel.setStyleSheet(
-                "QPushButton { background-color: #E2E8F0; color: #1E293B; font-weight: 700; border-radius: 8px; }"
+                "QPushButton { background-color: #E2E8F0; color: #1E293B; font-size: 14px; font-weight: 800; border-radius: 8px; padding: 0 16px; }"
                 "QPushButton:hover { background-color: #CBD5E1; }"
             )
             btn_cancel.clicked.connect(self.close_overlay)
-            btn_row.addWidget(btn_cancel)
+            btn_row.addWidget(btn_cancel, 1)
 
-            btn_ok = QPushButton("Confirmar")
-            btn_ok.setMinimumHeight(40)
+            btn_ok = QPushButton(confirm_text)
+            btn_ok.setMinimumHeight(48)
             btn_ok.setStyleSheet(
-                f"QPushButton {{ background-color: {color_hex}; color: #FFFFFF; font-weight: 800; border-radius: 8px; }}"
+                f"QPushButton {{ background-color: {color_hex}; color: #FFFFFF; font-size: 14px; font-weight: 900; border-radius: 8px; padding: 0 16px; }}"
             )
 
             def _confirm_and_close():
@@ -2508,12 +2517,12 @@ class InWindowOverlayLayer(QWidget):
                     on_confirm()
 
             btn_ok.clicked.connect(_confirm_and_close)
-            btn_row.addWidget(btn_ok)
+            btn_row.addWidget(btn_ok, 1)
         else:
             btn_ok = QPushButton("ENTENDIDO")
-            btn_ok.setMinimumHeight(42)
+            btn_ok.setMinimumHeight(46)
             btn_ok.setStyleSheet(
-                f"QPushButton {{ background-color: {color_hex}; color: #FFFFFF; font-size: 13px; font-weight: 800; border-radius: 8px; }}"
+                f"QPushButton {{ background-color: {color_hex}; color: #FFFFFF; font-size: 14px; font-weight: 800; border-radius: 8px; }}"
             )
             btn_ok.clicked.connect(self.close_overlay)
             btn_row.addWidget(btn_ok)
@@ -5633,10 +5642,36 @@ class KostalHmiWindow(QMainWindow):
             self.overlay.show_message("Acción No Permitida", "Debe existir al menos una receta en el sistema.", "warn")
             return
         actual = self.combo_admin_rec.currentText()
-        self.config["recetas"] = [r for r in recetas if r.get("nombre") != actual]
-        guardar_configuracion_disco(self.config)
-        self._refresh_admin_recipes_list()
-        self.cargar_receta_por_nombre(self.config["recetas"][0]["nombre"], silencioso=True)
+        rec_obj = next((r for r in recetas if r.get("nombre") == actual), {})
+        pieza_info = rec_obj.get("pieza", "-")
+        modelo_info = rec_obj.get("modelo", "-")
+        dim_info = f"{rec_obj.get('filas', '-')} × {rec_obj.get('columnas', rec_obj.get('cols', '-'))}"
+
+        def _ejecutar_eliminacion_receta():
+            self.config["recetas"] = [r for r in self.config.get("recetas", []) if r.get("nombre") != actual]
+            guardar_configuracion_disco(self.config)
+            self._refresh_admin_recipes_list()
+            if self.config["recetas"]:
+                self.cargar_receta_por_nombre(self.config["recetas"][0]["nombre"], silencioso=True)
+            log_debug_hmi(f"Programa/Receta eliminado por administrador: '{actual}'")
+            self.overlay.show_message(
+                "Programa Eliminado",
+                f"La receta '{actual}' fue eliminada permanentemente del sistema, de la Base de Datos Local y del Catálogo Excel.",
+                "ok",
+            )
+
+        self.overlay.show_message(
+            "¿Eliminar Programa / Receta?",
+            f"¿Está seguro de que desea eliminar permanentemente el siguiente programa?\n\n"
+            f"• Receta / Jig: {actual}\n"
+            f"• Pieza: {pieza_info}  |  Modelo: {modelo_info}\n"
+            f"• Matriz: {dim_info}\n\n"
+            f"Esta acción también lo eliminará de la Base de Datos Local y del Excel Maestro.",
+            tipo="danger",
+            on_confirm=_ejecutar_eliminacion_receta,
+            confirm_text="Sí, Eliminar Programa",
+            cancel_text="Cancelar",
+        )
 
     def _admin_save_recipe(self):
         orig_name = self.combo_admin_rec.currentText()
@@ -5821,18 +5856,35 @@ class KostalHmiWindow(QMainWindow):
                 self.tbl_stats.setItem(r_idx, c_idx, cell)
 
     def _reset_production_counters(self):
-        self.produccion_total = 0
-        self.produccion_ok = 0
-        self.produccion_nok = 0
-        self.config["produccion_total"] = 0
-        self.config["produccion_ok"] = 0
-        self.config["produccion_nok"] = 0
-        self.config["historial_horas"] = []
-        DB_MANAGER.limpiar_historial_informes(self.config)
-        guardar_configuracion_disco(self.config)
-        self._refresh_admin_stats_table()
-        self._refresh_all_operator_ui()
-        self.overlay.show_message("Contadores Reiniciados", "Se han puesto en cero los contadores de producción.", "ok")
+        def _ejecutar_reinicio():
+            self.produccion_total = 0
+            self.produccion_ok = 0
+            self.produccion_nok = 0
+            self.config["produccion_total"] = 0
+            self.config["produccion_ok"] = 0
+            self.config["produccion_nok"] = 0
+            self.config["historial_horas"] = []
+            DB_MANAGER.limpiar_historial_informes(self.config)
+            guardar_configuracion_disco(self.config)
+            self._refresh_admin_stats_table()
+            self._refresh_all_operator_ui()
+            log_debug_hmi("Contadores e historial de producción reiniciados por administrador.")
+            self.overlay.show_message(
+                "Contadores Reiniciados",
+                "Se han puesto en cero los contadores de producción y el historial horario.",
+                "ok",
+            )
+
+        self.overlay.show_message(
+            "¿Reiniciar Contadores e Historial?",
+            f"¿Está seguro de que desea poner en cero los contadores actuales "
+            f"(Total: {self.produccion_total}, OK: {self.produccion_ok}, NOK: {self.produccion_nok}) "
+            f"y limpiar la tabla de informes horarios?",
+            tipo="danger",
+            on_confirm=_ejecutar_reinicio,
+            confirm_text="Sí, Reiniciar Todo",
+            cancel_text="Cancelar",
+        )
 
     def _export_stats_excel(self):
         if not OPENPYXL_DISPONIBLE:
@@ -5948,14 +6000,64 @@ class KostalHmiWindow(QMainWindow):
     def _admin_del_user(self):
         row = self.tbl_users.currentRow()
         if row < 0:
+            self.overlay.show_message(
+                "Selección Requerida",
+                "Por favor, seleccione en la tabla el usuario que desea eliminar.",
+                "warn",
+            )
             return
         uid = self.tbl_users.item(row, 0).text()
+        nom = self.tbl_users.item(row, 1).text() if self.tbl_users.item(row, 1) else uid
+        rol = self.tbl_users.item(row, 2).text() if self.tbl_users.item(row, 2) else "OPERADOR"
         usrs = self.config.get("usuarios", [])
         if len(usrs) <= 1:
+            self.overlay.show_message(
+                "Acción No Permitida",
+                "Debe existir al menos un usuario registrado en el sistema.",
+                "warn",
+            )
             return
-        self.config["usuarios"] = [u for u in usrs if (u.get("num") or u.get("user")) != uid]
-        guardar_configuracion_disco(self.config)
-        self._refresh_admin_users_table()
+
+        # Prevenir que un admin se elimine a sí mismo si está en sesión activa
+        user_en_sesion = (
+            self.usuario_actual.get("num")
+            or self.usuario_actual.get("user")
+            or ""
+        )
+        if uid == user_en_sesion:
+            self.overlay.show_message(
+                "Acción No Permitida",
+                f"No puede eliminar al usuario activo en sesión actual ('{uid}').",
+                "warn",
+            )
+            return
+
+        def _ejecutar_eliminacion_usuario():
+            self.config["usuarios"] = [
+                u for u in self.config.get("usuarios", [])
+                if (u.get("num") or u.get("user")) != uid
+            ]
+            guardar_configuracion_disco(self.config)
+            self._refresh_admin_users_table()
+            log_debug_hmi(f"Usuario eliminado por administrador: '{uid}' ({nom}, {rol})")
+            self.overlay.show_message(
+                "Usuario Eliminado",
+                f"El usuario '{nom}' ({uid}) fue eliminado correctamente del sistema.",
+                "ok",
+            )
+
+        self.overlay.show_message(
+            "¿Eliminar Usuario del Sistema?",
+            f"¿Está seguro de que desea eliminar permanentemente al siguiente usuario?\n\n"
+            f"• ID Empleado: {uid}\n"
+            f"• Nombre: {nom}\n"
+            f"• Rol de Acceso: {rol}\n\n"
+            f"El usuario ya no podrá iniciar sesión en la máquina.",
+            tipo="danger",
+            on_confirm=_ejecutar_eliminacion_usuario,
+            confirm_text="Sí, Eliminar Usuario",
+            cancel_text="Cancelar",
+        )
 
     # ---------------- TAB 3: CONFIGURACIÓN GLOBAL OPC UA ----------------
     def _build_admin_tab_config(self):
