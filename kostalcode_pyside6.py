@@ -5988,6 +5988,30 @@ class KostalHmiWindow(QMainWindow):
         usrs = self.config.setdefault("usuarios", [])
         ex = next((u for u in usrs if (u.get("num") or u.get("user")) == uid), None)
         if ex:
+            rol_anterior = str(ex.get("rol", "OPERADOR")).upper()
+            nuevo_rol_norm = "ADMINISTRADOR" if rol in ("ADMIN", "ADMINISTRADOR") else "OPERADOR"
+            anterior_norm = "ADMINISTRADOR" if rol_anterior in ("ADMIN", "ADMINISTRADOR") else "OPERADOR"
+
+            # Si se intenta cambiar el rol de un usuario existente, verificar que no deje sin representantes al rol anterior
+            if anterior_norm != nuevo_rol_norm:
+                mismo_rol_otros = [
+                    u for u in usrs
+                    if (u.get("num") or u.get("user")) != uid
+                    and (
+                        "ADMINISTRADOR"
+                        if str(u.get("rol", "OPERADOR")).upper() in ("ADMIN", "ADMINISTRADOR")
+                        else "OPERADOR"
+                    ) == anterior_norm
+                ]
+                if not mismo_rol_otros:
+                    self.overlay.show_message(
+                        "Cambio de Rol No Permitido",
+                        f"No es posible cambiar el rol de '{uid}' porque es el único usuario con rol {anterior_norm}.\n\n"
+                        f"Debe existir forzosamente al menos un ADMINISTRADOR y un OPERADOR en el sistema.",
+                        "warn",
+                    )
+                    return
+
             ex.update({"num": uid, "user": uid, "nombre": nom or uid, "pass": pwd, "rol": rol})
         else:
             usrs.append({"num": uid, "user": uid, "nombre": nom or uid, "pass": pwd, "rol": rol})
@@ -6010,10 +6034,32 @@ class KostalHmiWindow(QMainWindow):
         nom = self.tbl_users.item(row, 1).text() if self.tbl_users.item(row, 1) else uid
         rol = self.tbl_users.item(row, 2).text() if self.tbl_users.item(row, 2) else "OPERADOR"
         usrs = self.config.get("usuarios", [])
-        if len(usrs) <= 1:
+
+        # Normalizar roles para comprobación de cuota mínima estricta (mínimo 1 ADMIN y 1 OPERADOR)
+        rol_norm = "ADMINISTRADOR" if str(rol).upper() in ("ADMIN", "ADMINISTRADOR") else "OPERADOR"
+        admins_activos = [
+            u for u in usrs
+            if str(u.get("rol", "OPERADOR")).upper() in ("ADMIN", "ADMINISTRADOR")
+        ]
+        operadores_activos = [
+            u for u in usrs
+            if str(u.get("rol", "OPERADOR")).upper() not in ("ADMIN", "ADMINISTRADOR")
+        ]
+
+        if rol_norm == "ADMINISTRADOR" and len(admins_activos) <= 1:
             self.overlay.show_message(
-                "Acción No Permitida",
-                "Debe existir al menos un usuario registrado en el sistema.",
+                "Acción No Permitida — Regla de Seguridad",
+                f"No es posible eliminar al usuario '{nom}' ({uid}) porque es el único ADMINISTRADOR registrado en el sistema.\n\n"
+                f"Debe existir forzosamente al menos un ADMINISTRADOR y un OPERADOR activos en la máquina.",
+                "warn",
+            )
+            return
+
+        if rol_norm == "OPERADOR" and len(operadores_activos) <= 1:
+            self.overlay.show_message(
+                "Acción No Permitida — Regla de Seguridad",
+                f"No es posible eliminar al usuario '{nom}' ({uid}) porque es el único OPERADOR registrado en el sistema.\n\n"
+                f"Debe existir forzosamente al menos un ADMINISTRADOR y un OPERADOR activos en la máquina.",
                 "warn",
             )
             return
