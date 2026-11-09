@@ -601,11 +601,29 @@ class OpcUaWorker(QThread):
                 vnode = obj.add_variable(idx, k, init_val)
                 vnode.set_writable()
                 self.server_nodes[k] = vnode
+            for counter_key in ("Piezas_Totales", "Piezas_OK", "Piezas_NOK"):
+                cnode = obj.add_variable(idx, counter_key, 0)
+                cnode.set_writable()
+                self.server_nodes[counter_key] = cnode
             self.server.start()
             self.server_running = True
             log_debug_hmi(f"Servidor OPC UA Puerto 2 iniciado en {bind_ip}:{port}")
         except Exception as e:
             log_debug_hmi(f"Aviso Servidor OPC UA local: {e}")
+
+    def update_production_counters(self, total_pz, ok_pz, nok_pz):
+        if not self.server_running:
+            return
+        for key, val in (
+            ("Piezas_Totales", int(total_pz)),
+            ("Piezas_OK", int(ok_pz)),
+            ("Piezas_NOK", int(nok_pz)),
+        ):
+            if key in self.server_nodes:
+                try:
+                    self.server_nodes[key].set_value(int(val))
+                except Exception:
+                    pass
 
     def _ping_socket(self, ip, port, timeout=1.2):
         try:
@@ -1395,9 +1413,9 @@ class InWindowOverlayLayer(QWidget):
         btn_row.addWidget(btn_load)
         lay.addLayout(btn_row)
 
-    # 3. Modal de Registro de Fin de Hora
+    # 3. Modal de Registro de Fin de Hora (Conteo Total Automático + NO OK Manual)
     def show_hourly_log_modal(self, receta_nom, total_actual, nok_actual, on_save_callback):
-        card = self._prepare_card(width=520, min_height=370)
+        card = self._prepare_card(width=520, min_height=390)
         lay = QVBoxLayout(card)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(10)
@@ -1406,9 +1424,16 @@ class InWindowOverlayLayer(QWidget):
         lbl_tit.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 17px; font-weight: 800;")
         lay.addWidget(lbl_tit)
 
+        lbl_sub = QLabel("El conteo total se realiza automáticamente. Ingrese manualmente las piezas NO OK.")
+        lbl_sub.setStyleSheet("color: #475569; font-size: 11px; font-weight: 600;")
+        lbl_sub.setWordWrap(True)
+        lay.addWidget(lbl_sub)
+
         lbl_rec = QLabel(f"Receta Activa: {receta_nom}")
-        lbl_rec.setStyleSheet("color: #475569; font-size: 12px; font-weight: 700;")
+        lbl_rec.setStyleSheet("color: #334155; font-size: 12px; font-weight: 700;")
         lay.addWidget(lbl_rec)
+
+        total_fijo = max(0, int(total_actual))
 
         form_box = QFrame()
         form_box.setObjectName("ModalSubCard")
@@ -1416,54 +1441,85 @@ class InWindowOverlayLayer(QWidget):
         flay.setContentsMargins(14, 14, 14, 14)
         flay.setSpacing(10)
 
-        flay.addWidget(QLabel("Total Piezas en la Hora:"), 0, 0)
-        inp_total = QLineEdit(str(max(0, int(total_actual))))
-        inp_total.setAlignment(Qt.AlignCenter)
-        inp_total.setMinimumHeight(34)
-        flay.addWidget(inp_total, 0, 1, 1, 3)
+        lbl_tot_caption = QLabel("Total Piezas (Conteo Automático):")
+        lbl_tot_caption.setStyleSheet("font-size: 12px; font-weight: 700; color: #334155;")
+        flay.addWidget(lbl_tot_caption, 0, 0)
 
-        flay.addWidget(QLabel("Piezas NOK (Scrap):"), 1, 0)
+        lbl_tot_val = QLabel(str(total_fijo))
+        lbl_tot_val.setAlignment(Qt.AlignCenter)
+        lbl_tot_val.setMinimumHeight(34)
+        lbl_tot_val.setStyleSheet(
+            f"background-color: #E2E8F0; color: {COLOR_BRAND_PRIMARY}; font-family: Consolas; "
+            "font-size: 16px; font-weight: 900; border: 1px solid #CBD5E1; border-radius: 6px;"
+        )
+        flay.addWidget(lbl_tot_val, 0, 1, 1, 3)
+
+        lbl_nok_caption = QLabel("Piezas NO OK (Ingreso Manual):")
+        lbl_nok_caption.setStyleSheet(f"font-size: 12px; font-weight: 800; color: {COLOR_ERR};")
+        flay.addWidget(lbl_nok_caption, 1, 0)
+
         btn_minus = QPushButton("-")
-        btn_minus.setFixedSize(36, 34)
-        inp_nok = QLineEdit(str(max(0, int(nok_actual))))
+        btn_minus.setFixedSize(38, 34)
+        btn_minus.setStyleSheet(
+            f"background-color: #FEE2E2; color: {COLOR_ERR}; font-size: 16px; font-weight: 900; border-radius: 6px;"
+        )
+        inp_nok = QLineEdit(str(max(0, min(total_fijo, int(nok_actual)))))
         inp_nok.setAlignment(Qt.AlignCenter)
         inp_nok.setMinimumHeight(34)
+        inp_nok.setStyleSheet(
+            f"background-color: #FFFFFF; color: {COLOR_ERR}; font-family: Consolas; font-size: 15px; font-weight: 900; "
+            f"border: 2px solid {COLOR_ERR}; border-radius: 6px;"
+        )
         btn_plus = QPushButton("+")
-        btn_plus.setFixedSize(36, 34)
+        btn_plus.setFixedSize(38, 34)
+        btn_plus.setStyleSheet(
+            f"background-color: #FEE2E2; color: {COLOR_ERR}; font-size: 16px; font-weight: 900; border-radius: 6px;"
+        )
         flay.addWidget(btn_minus, 1, 1)
         flay.addWidget(inp_nok, 1, 2)
         flay.addWidget(btn_plus, 1, 3)
 
+        lbl_ok_caption = QLabel("Piezas OK (Cálculo Automático):")
+        lbl_ok_caption.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {COLOR_OK};")
+        flay.addWidget(lbl_ok_caption, 2, 0)
+
+        lbl_ok_val = QLabel()
+        lbl_ok_val.setAlignment(Qt.AlignCenter)
+        lbl_ok_val.setMinimumHeight(34)
+        lbl_ok_val.setStyleSheet(
+            f"background-color: #ECFDF5; color: {COLOR_OK}; font-family: Consolas; "
+            "font-size: 16px; font-weight: 900; border: 1px solid #10B981; border-radius: 6px;"
+        )
+        flay.addWidget(lbl_ok_val, 2, 1, 1, 3)
+
         lbl_calc = QLabel()
+        lbl_calc.setAlignment(Qt.AlignCenter)
         lbl_calc.setStyleSheet("font-size: 13px; font-weight: 800; color: #059669;")
-        flay.addWidget(lbl_calc, 2, 0, 1, 4)
+        flay.addWidget(lbl_calc, 3, 0, 1, 4)
 
         lay.addWidget(form_box)
 
         def _recalc():
             try:
-                t = max(0, int(float(inp_total.text() or 0)))
-            except ValueError:
-                t = 0
-            try:
-                n = max(0, min(t, int(float(inp_nok.text() or 0))))
+                n = max(0, min(total_fijo, int(float(inp_nok.text() or 0))))
             except ValueError:
                 n = 0
-            ok_v = max(0, t - n)
-            cal = (ok_v / t * 100.0) if t > 0 else 100.0
-            lbl_calc.setText(f"Piezas OK: {ok_v}   |   Calidad del Corte: {cal:.1f}%")
+            ok_v = max(0, total_fijo - n)
+            cal = (ok_v / total_fijo * 100.0) if total_fijo > 0 else 100.0
+            lbl_ok_val.setText(str(ok_v))
+            lbl_calc.setText(f"Calidad del Corte: {cal:.1f}%   (Total Auto: {total_fijo} | OK: {ok_v} | NO OK: {n})")
 
         def _adj_nok(delta):
             try:
                 cur = int(float(inp_nok.text() or 0))
             except ValueError:
                 cur = 0
-            inp_nok.setText(str(max(0, cur + delta)))
+            nuevo_nok = max(0, min(total_fijo, cur + delta))
+            inp_nok.setText(str(nuevo_nok))
             _recalc()
 
         btn_minus.clicked.connect(lambda: _adj_nok(-1))
         btn_plus.clicked.connect(lambda: _adj_nok(1))
-        inp_total.textChanged.connect(lambda _: _recalc())
         inp_nok.textChanged.connect(lambda _: _recalc())
         _recalc()
 
@@ -1485,15 +1541,11 @@ class InWindowOverlayLayer(QWidget):
 
         def _commit():
             try:
-                t = max(0, int(float(inp_total.text() or 0)))
-            except ValueError:
-                t = 0
-            try:
-                n = max(0, min(t, int(float(inp_nok.text() or 0))))
+                n = max(0, min(total_fijo, int(float(inp_nok.text() or 0))))
             except ValueError:
                 n = 0
             self.close_overlay()
-            on_save_callback(t, n)
+            on_save_callback(total_fijo, n)
 
         btn_save.clicked.connect(_commit)
         btn_row.addWidget(btn_save)
@@ -2327,39 +2379,73 @@ class KostalHmiWindow(QMainWindow):
         sess_row.addWidget(self.lbl_tiempo_sesion_val)
         cplay.addLayout(sess_row)
 
-        # Cajas KPI: TOTAL y OK
+        # Cajas KPI: TOTAL (Automático), OK (Automático) y NO OK (Manual)
         kpi_row = QHBoxLayout()
-        kpi_row.setSpacing(8)
+        kpi_row.setSpacing(6)
 
         kpi_tot_box = QFrame()
         kpi_tot_box.setObjectName("SubSurface")
         ktlay = QVBoxLayout(kpi_tot_box)
-        ktlay.setContentsMargins(8, 4, 8, 4)
+        ktlay.setContentsMargins(6, 4, 6, 4)
         ktlay.setSpacing(1)
-        self.lbl_kpi_tot_tit = QLabel("TOTAL")
+        self.lbl_kpi_tot_tit = QLabel("TOTAL (AUTO)")
         self.lbl_kpi_tot_tit.setAlignment(Qt.AlignCenter)
-        self.lbl_kpi_tot_tit.setStyleSheet("font-size: 10px; font-weight: 800; color: #475569;")
+        self.lbl_kpi_tot_tit.setStyleSheet("font-size: 9px; font-weight: 800; color: #475569;")
         self.lbl_kpi_tot_val = QLabel("0")
         self.lbl_kpi_tot_val.setAlignment(Qt.AlignCenter)
-        self.lbl_kpi_tot_val.setStyleSheet("font-family: Consolas; font-size: 18px; font-weight: 900; color: #0F172A;")
+        self.lbl_kpi_tot_val.setStyleSheet("font-family: Consolas; font-size: 17px; font-weight: 900; color: #0F172A;")
         ktlay.addWidget(self.lbl_kpi_tot_tit)
         ktlay.addWidget(self.lbl_kpi_tot_val)
-        kpi_row.addWidget(kpi_tot_box)
+        kpi_row.addWidget(kpi_tot_box, 1)
 
         kpi_ok_box = QFrame()
         kpi_ok_box.setObjectName("SubSurface")
         kolay = QVBoxLayout(kpi_ok_box)
-        kolay.setContentsMargins(8, 4, 8, 4)
+        kolay.setContentsMargins(6, 4, 6, 4)
         kolay.setSpacing(1)
-        self.lbl_kpi_ok_tit = QLabel("OK")
+        self.lbl_kpi_ok_tit = QLabel("OK (AUTO)")
         self.lbl_kpi_ok_tit.setAlignment(Qt.AlignCenter)
-        self.lbl_kpi_ok_tit.setStyleSheet(f"font-size: 10px; font-weight: 800; color: {COLOR_OK};")
+        self.lbl_kpi_ok_tit.setStyleSheet(f"font-size: 9px; font-weight: 800; color: {COLOR_OK};")
         self.lbl_kpi_ok_val = QLabel("0")
         self.lbl_kpi_ok_val.setAlignment(Qt.AlignCenter)
-        self.lbl_kpi_ok_val.setStyleSheet(f"font-family: Consolas; font-size: 18px; font-weight: 900; color: {COLOR_OK};")
+        self.lbl_kpi_ok_val.setStyleSheet(f"font-family: Consolas; font-size: 17px; font-weight: 900; color: {COLOR_OK};")
         kolay.addWidget(self.lbl_kpi_ok_tit)
         kolay.addWidget(self.lbl_kpi_ok_val)
-        kpi_row.addWidget(kpi_ok_box)
+        kpi_row.addWidget(kpi_ok_box, 1)
+
+        kpi_nok_box = QFrame()
+        kpi_nok_box.setObjectName("SubSurface")
+        knlay = QVBoxLayout(kpi_nok_box)
+        knlay.setContentsMargins(6, 4, 6, 4)
+        knlay.setSpacing(2)
+        self.lbl_kpi_nok_tit = QLabel("NO OK (MANUAL)")
+        self.lbl_kpi_nok_tit.setAlignment(Qt.AlignCenter)
+        self.lbl_kpi_nok_tit.setStyleSheet(f"font-size: 9px; font-weight: 800; color: {COLOR_ERR};")
+        knlay.addWidget(self.lbl_kpi_nok_tit)
+
+        nok_ctrl_row = QHBoxLayout()
+        nok_ctrl_row.setContentsMargins(0, 0, 0, 0)
+        nok_ctrl_row.setSpacing(4)
+        btn_nok_m = QPushButton("-")
+        btn_nok_m.setFixedSize(22, 22)
+        btn_nok_m.setStyleSheet(
+            f"background-color: #FEE2E2; color: {COLOR_ERR}; font-size: 12px; font-weight: 900; padding: 0; border-radius: 4px;"
+        )
+        btn_nok_m.clicked.connect(lambda: self.ajustar_nok_manual(-1))
+        self.lbl_kpi_nok_val = QLabel("0")
+        self.lbl_kpi_nok_val.setAlignment(Qt.AlignCenter)
+        self.lbl_kpi_nok_val.setStyleSheet(f"font-family: Consolas; font-size: 16px; font-weight: 900; color: {COLOR_ERR};")
+        btn_nok_p = QPushButton("+")
+        btn_nok_p.setFixedSize(22, 22)
+        btn_nok_p.setStyleSheet(
+            f"background-color: #FEE2E2; color: {COLOR_ERR}; font-size: 12px; font-weight: 900; padding: 0; border-radius: 4px;"
+        )
+        btn_nok_p.clicked.connect(lambda: self.ajustar_nok_manual(1))
+        nok_ctrl_row.addWidget(btn_nok_m)
+        nok_ctrl_row.addWidget(self.lbl_kpi_nok_val, 1)
+        nok_ctrl_row.addWidget(btn_nok_p)
+        knlay.addLayout(nok_ctrl_row)
+        kpi_row.addWidget(kpi_nok_box, 1)
 
         cplay.addLayout(kpi_row)
 
@@ -3017,8 +3103,10 @@ class KostalHmiWindow(QMainWindow):
         self.btn_ver_jigs.setText(self._tr("ver_jigs"))
         self.lbl_piezas_realizadas_tit.setText(self._tr("piezas_realizadas") + ":")
         self.lbl_tiempo_sesion_tit.setText(self._tr("tiempo_sesion"))
-        self.lbl_kpi_tot_tit.setText(self._tr("total"))
-        self.lbl_kpi_ok_tit.setText(self._tr("ok"))
+        self.lbl_kpi_tot_tit.setText("TOTAL (AUTO)")
+        self.lbl_kpi_ok_tit.setText("OK (AUTO)")
+        if hasattr(self, "lbl_kpi_nok_tit"):
+            self.lbl_kpi_nok_tit.setText("NO OK (MANUAL)")
         self.btn_reg_fin_hora.setText(self._tr("reg_fin_hora"))
         self.lbl_title_ctrl_pintado.setText(self._tr("ctrl_pintado"))
 
@@ -3085,8 +3173,15 @@ class KostalHmiWindow(QMainWindow):
                 "background-color: #FFFBEB; color: #D97706; font-size: 11px; font-weight: 800; border: 1px solid #F59E0B; border-radius: 6px;"
             )
 
+        self.produccion_ok = max(0, self.produccion_total - self.produccion_nok)
         self.lbl_kpi_tot_val.setText(str(self.produccion_total))
         self.lbl_kpi_ok_val.setText(str(self.produccion_ok))
+        if hasattr(self, "lbl_kpi_nok_val"):
+            self.lbl_kpi_nok_val.setText(str(self.produccion_nok))
+        if hasattr(self, "opc_worker"):
+            self.opc_worker.update_production_counters(
+                self.produccion_total, self.produccion_ok, self.produccion_nok
+            )
 
         # Botón Principal de Pintado
         if not self.set_0_confirmado:
@@ -3356,28 +3451,28 @@ class KostalHmiWindow(QMainWindow):
             self._refresh_all_operator_ui()
             return
 
-        # Marcar pieza actual como completada OK
+        # Marcar pieza actual como completada OK y contabilizar automáticamente
         if self.indice_matriz_actual < len(self.estados_piezas):
             self.estados_piezas[self.indice_matriz_actual] = "ok"
 
         self.piezas_realizadas_lote += 1
         self.produccion_total += 1
-        self.produccion_ok += 1
+        self.produccion_ok = max(0, self.produccion_total - self.produccion_nok)
         self.config["produccion_total"] = self.produccion_total
         self.config["produccion_ok"] = self.produccion_ok
 
-        # Verificar si se completó el Jig entero
+        # Verificar si se completó el Jig entero (retorno automático a Home y reinicio de matriz)
         if self.piezas_realizadas_lote >= self.piezas_por_jig_actual:
             self.estado_pintando = False
             self.sim_cycle_timer.stop()
             self.opc_worker.enqueue_write("PINTAR", False)
             guardar_configuracion_disco(self.config)
             self._refresh_all_operator_ui()
-            self.overlay.show_message(
-                "Lote Completado",
-                f"Se han completado todas las {self.piezas_por_jig_actual} piezas del lote para la receta activa.",
-                "ok",
+            log_debug_hmi(
+                f"Fin de ciclo automático: +{self.piezas_por_jig_actual} piezas (Total={self.produccion_total}, OK={self.produccion_ok}, NOK={self.produccion_nok}). Retornando a Home."
             )
+            self.ejecutar_home_general()
+            QTimer.singleShot(1200, self._reiniciar_matriz_post_ciclo)
             return
 
         # Avanzar a la siguiente cavidad
@@ -3387,6 +3482,15 @@ class KostalHmiWindow(QMainWindow):
             self.estados_piezas[self.indice_matriz_actual] = "activa"
 
         self._enviar_pieza_actual_al_plc()
+        self._refresh_all_operator_ui()
+
+    def _reiniciar_matriz_post_ciclo(self):
+        if self.estado_pintando:
+            return
+        self.indice_matriz_actual = 0
+        self.pasada_actual_pieza = 1
+        self.piezas_realizadas_lote = 0
+        self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
         self._refresh_all_operator_ui()
 
     def probar_movimiento_pieza_actual(self):
@@ -3628,6 +3732,16 @@ class KostalHmiWindow(QMainWindow):
             log_debug_hmi("PARO liberado -> Esperando secuencia RESET -> INICIO.")
         self._refresh_all_operator_ui()
 
+    def ajustar_nok_manual(self, delta):
+        """Permite integrar o ajustar manualmente las piezas NO OK descontándolas automáticamente de OK."""
+        nuevo_nok = max(0, min(self.produccion_total, self.produccion_nok + int(delta)))
+        self.produccion_nok = nuevo_nok
+        self.produccion_ok = max(0, self.produccion_total - self.produccion_nok)
+        self.config["produccion_nok"] = self.produccion_nok
+        self.config["produccion_ok"] = self.produccion_ok
+        guardar_configuracion_disco(self.config)
+        self._refresh_all_operator_ui()
+
     def abrir_dialogo_fin_de_hora(self):
         rec_nom = self.config.get("receta_activa", "")
         self.overlay.show_hourly_log_modal(
@@ -3638,30 +3752,31 @@ class KostalHmiWindow(QMainWindow):
         )
 
     def _guardar_corte_fin_de_hora(self, total_h, nok_h):
-        ok_h = max(0, total_h - nok_h)
-        cal = round((ok_h / total_h * 100.0), 1) if total_h > 0 else 100.0
+        total_auto = self.produccion_total
+        nok_manual = max(0, min(total_auto, int(nok_h)))
+        ok_auto = max(0, total_auto - nok_manual)
+        cal = round((ok_auto / total_auto * 100.0), 1) if total_auto > 0 else 100.0
         registro = {
             "fecha": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "usuario": self.usuario_actual.get("nombre", "Operador"),
             "receta": self.config.get("receta_activa", ""),
-            "total": total_h,
-            "ok": ok_h,
-            "nok": nok_h,
+            "total": total_auto,
+            "ok": ok_auto,
+            "nok": nok_manual,
             "calidad": f"{cal:.1f}%",
         }
         self.config.setdefault("historial_horas", []).append(registro)
-        self.produccion_total = total_h
-        self.produccion_ok = ok_h
-        self.produccion_nok = nok_h
-        self.config["produccion_total"] = total_h
-        self.config["produccion_ok"] = ok_h
-        self.config["produccion_nok"] = nok_h
+        self.produccion_ok = ok_auto
+        self.produccion_nok = nok_manual
+        self.config["produccion_total"] = self.produccion_total
+        self.config["produccion_ok"] = self.produccion_ok
+        self.config["produccion_nok"] = self.produccion_nok
         guardar_configuracion_disco(self.config)
         self._refresh_all_operator_ui()
         self._refresh_admin_stats_table()
         self.overlay.show_message(
             "Corte de Hora Registrado",
-            f"Se guardó el registro horario: Total={total_h}, OK={ok_h}, NOK={nok_h} ({cal:.1f}%).",
+            f"Se guardó el registro horario: Total Automático={total_auto}, OK={ok_auto}, NO OK Manual={nok_manual} ({cal:.1f}%).",
             "ok",
         )
 
