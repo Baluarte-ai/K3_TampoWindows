@@ -167,7 +167,7 @@ CONFIG_DEFAULT = {
     "set_0_confirmado": False,
     "vel_default": 100.0,
     "paso_jog_default": 5.0,
-    "pasadas_tampo": 1,
+    "pasadas_tampo": 2,
     "patron_pintado": "vertical",
     "idioma": "ES",
     "receta_activa": "#1 - Palanca Limpiaparabrisas",
@@ -1747,7 +1747,8 @@ class KostalHmiWindow(QMainWindow):
 
         self.velocidad_actual = float(self.config.get("vel_default", 100.0))
         self.paso_jog = float(self.config.get("paso_jog_default", 5.0))
-        self.pasadas_tampo = int(self.config.get("pasadas_tampo", 1))
+        self.pasadas_tampo = 2
+        self.config["pasadas_tampo"] = 2
         self.patron_pintado = self.config.get("patron_pintado", "vertical")
 
         # Matriz dinámica
@@ -2590,23 +2591,6 @@ class KostalHmiWindow(QMainWindow):
         mode_vel_row.addWidget(lbl_mms)
         c_lay.addLayout(mode_vel_row)
 
-        # Selector de Ciclos de Tampo: [1 Pasada] / [2 Pasadas]
-        tampo_row = QHBoxLayout()
-        self.lbl_ciclos_tampo = QLabel("Ciclos Tampo:")
-        self.lbl_ciclos_tampo.setStyleSheet("font-size: 11px; font-weight: 700;")
-        tampo_row.addWidget(self.lbl_ciclos_tampo)
-
-        self.btn_pasada_1 = QPushButton("1 Pasada")
-        self.btn_pasada_1.setFixedHeight(28)
-        self.btn_pasada_1.clicked.connect(lambda: self.seleccionar_pasadas_tampo(1))
-        tampo_row.addWidget(self.btn_pasada_1)
-
-        self.btn_pasada_2 = QPushButton("2 Pasadas")
-        self.btn_pasada_2.setFixedHeight(28)
-        self.btn_pasada_2.clicked.connect(lambda: self.seleccionar_pasadas_tampo(2))
-        tampo_row.addWidget(self.btn_pasada_2)
-        c_lay.addLayout(tampo_row)
-
         # Sub-caja JOG Manual + Paso JOG + Presets
         jog_sub = QFrame()
         jog_sub.setObjectName("SubSurface")
@@ -3018,9 +3002,6 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_title_op_jog.setText(self._tr("op_jog"))
         self.btn_fold_jog.setText(self._tr("plegar") if self.jog_collapsible.is_expanded else self._tr("desplegar"))
         self.lbl_vel_tit.setText(self._tr("velocidad"))
-        self.lbl_ciclos_tampo.setText(self._tr("ciclos_tampo"))
-        self.btn_pasada_1.setText(self._tr("pasada_1"))
-        self.btn_pasada_2.setText(self._tr("pasada_2"))
         self.lbl_paso_jog_tit.setText(self._tr("paso_jog"))
         self.btn_home.setText(self._tr("home"))
         if not self.tampo_manual_activo:
@@ -3132,14 +3113,6 @@ class KostalHmiWindow(QMainWindow):
             b.setEnabled(jog_enabled)
         self.inp_coord_x.setEnabled(jog_enabled)
         self.inp_coord_y.setEnabled(jog_enabled)
-
-        # Botones 1 Pasada / 2 Pasadas
-        if self.pasadas_tampo == 1:
-            self.btn_pasada_1.setStyleSheet(f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-weight: 800; border-radius: 5px;")
-            self.btn_pasada_2.setStyleSheet("background-color: #E2E8F0; color: #334155; font-weight: 700; border-radius: 5px;")
-        else:
-            self.btn_pasada_2.setStyleSheet(f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-weight: 800; border-radius: 5px;")
-            self.btn_pasada_1.setStyleSheet("background-color: #E2E8F0; color: #334155; font-weight: 700; border-radius: 5px;")
 
         self.lbl_cero_reg_val.setText(f"X: {self.cero_guardado_x:.2f} | Y: {self.cero_guardado_y:.2f}")
 
