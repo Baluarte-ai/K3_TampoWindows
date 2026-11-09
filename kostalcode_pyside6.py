@@ -1998,22 +1998,25 @@ class KostalHmiWindow(QMainWindow):
         self.inp_login_pass.returnPressed.connect(self._attempt_login)
         pass_row.addWidget(self.inp_login_pass, 1)
 
-        btn_eye = QPushButton("👁")
-        btn_eye.setFixedSize(42, 40)
-        btn_eye.setStyleSheet("background-color: #E2E8F0; color: #0F172A; font-size: 15px;")
-
-        def _toggle_eye():
-            if self.inp_login_pass.echoMode() == QLineEdit.Password:
-                self.inp_login_pass.setEchoMode(QLineEdit.Normal)
-            else:
-                self.inp_login_pass.setEchoMode(QLineEdit.Password)
-
-        btn_eye.clicked.connect(_toggle_eye)
-        pass_row.addWidget(btn_eye)
+        self.btn_login_eye = QPushButton("👁")
+        self.btn_login_eye.setFixedSize(46, 40)
+        self.btn_login_eye.setCursor(Qt.PointingHandCursor)
+        self.btn_login_eye.setToolTip("Mostrar / Ocultar contraseña")
+        self.btn_login_eye.setStyleSheet(
+            "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 16px; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
+            "QPushButton:hover { background-color: #CBD5E1; }"
+        )
+        self.btn_login_eye.clicked.connect(self._toggle_login_password_visibility)
+        pass_row.addWidget(self.btn_login_eye)
 
         btn_kb = QPushButton("⌨️")
-        btn_kb.setFixedSize(42, 40)
-        btn_kb.setStyleSheet("background-color: #E0F2FE; color: #0369A1; font-size: 15px;")
+        btn_kb.setFixedSize(46, 40)
+        btn_kb.setCursor(Qt.PointingHandCursor)
+        btn_kb.setToolTip("Abrir teclado en pantalla")
+        btn_kb.setStyleSheet(
+            "QPushButton { background-color: #E0F2FE; color: #0369A1; font-size: 16px; border: 1px solid #BAE6FD; border-radius: 7px; padding: 0px; }"
+            "QPushButton:hover { background-color: #BAE6FD; }"
+        )
         btn_kb.clicked.connect(abrir_teclado_tactil_windows)
         pass_row.addWidget(btn_kb)
         clay.addLayout(pass_row)
@@ -2035,6 +2038,22 @@ class KostalHmiWindow(QMainWindow):
         lay.addStretch(1)
         return page
 
+    def _toggle_login_password_visibility(self):
+        if self.inp_login_pass.echoMode() == QLineEdit.EchoMode.Password:
+            self.inp_login_pass.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.btn_login_eye.setText("🙈")
+            self.btn_login_eye.setStyleSheet(
+                "QPushButton { background-color: #BAE6FD; color: #0369A1; font-size: 16px; border: 2px solid #0284C7; border-radius: 7px; padding: 0px; }"
+            )
+        else:
+            self.inp_login_pass.setEchoMode(QLineEdit.EchoMode.Password)
+            self.btn_login_eye.setText("👁")
+            self.btn_login_eye.setStyleSheet(
+                "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 16px; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
+                "QPushButton:hover { background-color: #CBD5E1; }"
+            )
+        self.inp_login_pass.setFocus()
+
     def _refresh_login_users_combo(self):
         if not hasattr(self, "combo_login_user"):
             return
@@ -2053,6 +2072,12 @@ class KostalHmiWindow(QMainWindow):
             return
         self.lbl_login_err.setText("")
         self.inp_login_pass.clear()
+        self.inp_login_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        self.btn_login_eye.setText("👁")
+        self.btn_login_eye.setStyleSheet(
+            "QPushButton { background-color: #E2E8F0; color: #0F172A; font-size: 16px; border: 1px solid #CBD5E1; border-radius: 7px; padding: 0px; }"
+            "QPushButton:hover { background-color: #CBD5E1; }"
+        )
         self.usuario_actual = dict(encontrado)
         self.sesion_segundos = 0
         self._update_user_header_ui()
