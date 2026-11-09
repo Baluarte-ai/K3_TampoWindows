@@ -451,6 +451,11 @@ def cargar_configuracion_disco():
         cal_val = bool(rec.get("cero_calibrado", rec.get("set_0_listo", True)))
         rec["cero_calibrado"] = cal_val
         rec["set_0_listo"] = cal_val
+    # Normalizar usuarios (soportando tanto la llave 'num' de config_hmi.json como 'user')
+    for idx, u in enumerate(cfg.get("usuarios", []), start=1):
+        uid = str(u.get("num") or u.get("user") or f"KOSTAL-{idx:04d}").strip()
+        u["num"] = uid
+        u["user"] = uid
     return cfg
 
 
@@ -2320,14 +2325,24 @@ class KostalHmiWindow(QMainWindow):
             return
         self.combo_login_user.clear()
         for u in self.config.get("usuarios", []):
-            etiqueta = f"{u.get('nombre', u.get('user'))} ({u.get('rol', 'OPERADOR')}) — [{u.get('user')}]"
-            self.combo_login_user.addItem(etiqueta, u.get("user"))
+            uid = str(u.get("num") or u.get("user") or "").strip()
+            nom = str(u.get("nombre") or uid or "Usuario").strip()
+            rol = str(u.get("rol", "OPERADOR")).strip()
+            etiqueta = f"{nom} ({rol}) — [{uid}]" if uid else f"{nom} ({rol})"
+            self.combo_login_user.addItem(etiqueta, uid or nom)
 
     def _attempt_login(self):
         user_id = self.combo_login_user.currentData()
         pwd = self.inp_login_pass.text().strip()
         usuarios = self.config.get("usuarios", [])
-        encontrado = next((u for u in usuarios if u.get("user") == user_id and u.get("pass") == pwd), None)
+        encontrado = next(
+            (
+                u for u in usuarios
+                if ((u.get("num") or u.get("user") or u.get("nombre")) == user_id)
+                and str(u.get("pass", "")) == pwd
+            ),
+            None,
+        )
         if not encontrado:
             self.lbl_login_err.setText("Contraseña incorrecta. Verifique sus credenciales.")
             return
@@ -4018,7 +4033,7 @@ class KostalHmiWindow(QMainWindow):
         rol = self.usuario_actual.get("rol", "OPERADOR").upper()
         self.lbl_header_user.setText(f"USUARIO: {nom}")
         self.lbl_header_rol.setText(rol)
-        es_admin = (rol == "ADMINISTRADOR")
+        es_admin = rol in ("ADMIN", "ADMINISTRADOR")
         self.btn_header_admin.setVisible(es_admin)
         self.btn_recetario_admin_shortcut.setVisible(es_admin)
 
@@ -4041,7 +4056,7 @@ class KostalHmiWindow(QMainWindow):
 
     def _open_admin_panel(self):
         rol = self.usuario_actual.get("rol", "OPERADOR").upper()
-        if rol != "ADMINISTRADOR":
+        if rol not in ("ADMIN", "ADMINISTRADOR"):
             self.overlay.show_message(
                 "Acceso Restringido",
                 "Solo los usuarios con rol ADMINISTRADOR pueden acceder al Panel de Ingeniería y Recetario.",
@@ -4536,8 +4551,10 @@ class KostalHmiWindow(QMainWindow):
         usrs = self.config.get("usuarios", [])
         self.tbl_users.setRowCount(len(usrs))
         for r_idx, u in enumerate(usrs):
-            for c_idx, k in enumerate(("user", "nombre", "rol", "pass")):
-                it = QTableWidgetItem(str(u.get(k, "")))
+            uid = u.get("num") or u.get("user") or ""
+            vals = (uid, u.get("nombre", ""), u.get("rol", ""), u.get("pass", ""))
+            for c_idx, val in enumerate(vals):
+                it = QTableWidgetItem(str(val))
                 it.setTextAlignment(Qt.AlignCenter)
                 self.tbl_users.setItem(r_idx, c_idx, it)
         self._refresh_login_users_combo()
@@ -4551,11 +4568,11 @@ class KostalHmiWindow(QMainWindow):
             self.overlay.show_message("Datos Incompletos", "Ingrese al menos ID de usuario y contraseña.", "warn")
             return
         usrs = self.config.setdefault("usuarios", [])
-        ex = next((u for u in usrs if u.get("user") == uid), None)
+        ex = next((u for u in usrs if (u.get("num") or u.get("user")) == uid), None)
         if ex:
-            ex.update({"nombre": nom or uid, "pass": pwd, "rol": rol})
+            ex.update({"num": uid, "user": uid, "nombre": nom or uid, "pass": pwd, "rol": rol})
         else:
-            usrs.append({"user": uid, "nombre": nom or uid, "pass": pwd, "rol": rol})
+            usrs.append({"num": uid, "user": uid, "nombre": nom or uid, "pass": pwd, "rol": rol})
         guardar_configuracion_disco(self.config)
         self._refresh_admin_users_table()
         self.inp_u_id.clear()
@@ -4570,7 +4587,7 @@ class KostalHmiWindow(QMainWindow):
         usrs = self.config.get("usuarios", [])
         if len(usrs) <= 1:
             return
-        self.config["usuarios"] = [u for u in usrs if u.get("user") != uid]
+        self.config["usuarios"] = [u for u in usrs if (u.get("num") or u.get("user")) != uid]
         guardar_configuracion_disco(self.config)
         self._refresh_admin_users_table()
 
