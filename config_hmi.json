@@ -1,11 +1,26 @@
 {
-    "cero_guardado_x": 0.0,
-    "cero_guardado_y": 0.0,
-    "velocidad": 120,
-    "paso_jog": 5.0,
+    "opc_ip": "192.168.1.69",
+    "opc_port": "4840",
+    "opc_server_bind_ip": "0.0.0.0",
+    "opc_server_port": "4840",
+    "plc_namespace": 4,
+    "node_prefix": "|var|WAGO 750-8212 PFC200 G2 2ETH RS XTR.Application.GVL.",
+    "estacion_nombre": "EST-KOSTAL-04",
+    "home_x": 0.0,
+    "home_y": 0.0,
+    "cero_x": 0.0,
+    "cero_y": 0.0,
+    "set_0_confirmado": false,
+    "vel_default": 100.0,
+    "paso_jog_default": 5.0,
     "pasadas_tampo": 2,
     "patron_pintado": "vertical",
+    "idioma": "ES",
     "receta_activa": "KSL-002 - Inserto Palanca",
+    "produccion_total": 0,
+    "produccion_ok": 0,
+    "produccion_nok": 0,
+    "historial_horas": [],
     "recetas": [
         {
             "nombre": "KSL-001 - Bisel Frontal",
@@ -22,7 +37,11 @@
             "cero_guardado_x": 0.0,
             "cero_guardado_y": 0.0,
             "cero_calibrado": true,
-            "corridas": 1
+            "corridas": 1,
+            "columnas": 5,
+            "cero_x": 0.0,
+            "cero_y": 0.0,
+            "set_0_listo": true
         },
         {
             "nombre": "KSL-002 - Inserto Palanca",
@@ -39,7 +58,11 @@
             "cero_guardado_x": 0.0,
             "cero_guardado_y": 0.0,
             "cero_calibrado": true,
-            "corridas": 4
+            "corridas": 4,
+            "columnas": 5,
+            "cero_x": 0.0,
+            "cero_y": 0.0,
+            "set_0_listo": true
         },
         {
             "nombre": "KSL-003 - Conector SMC",
@@ -56,7 +79,11 @@
             "cero_guardado_x": 0.0,
             "cero_guardado_y": 0.0,
             "cero_calibrado": true,
-            "corridas": 1
+            "corridas": 1,
+            "columnas": 5,
+            "cero_x": 0.0,
+            "cero_y": 0.0,
+            "set_0_listo": true
         },
         {
             "nombre": "Brayan",
@@ -73,7 +100,11 @@
             "cero_guardado_x": 0.0,
             "cero_guardado_y": 0.0,
             "cero_calibrado": true,
-            "corridas": 1
+            "corridas": 1,
+            "columnas": 5,
+            "cero_x": 0.0,
+            "cero_y": 0.0,
+            "set_0_listo": true
         },
         {
             "nombre": "Prueba 1",
@@ -82,7 +113,7 @@
             "filas": 5,
             "cols": 6,
             "piezas": 30,
-            "piezas_por_jig": 30,
+            "piezas_por_jig": 25,
             "delta_x": 37.0,
             "delta_y": 35.0,
             "velocidad": 100,
@@ -90,16 +121,20 @@
             "cero_guardado_x": 0.0,
             "cero_guardado_y": 0.0,
             "cero_calibrado": true,
-            "corridas": 1
+            "corridas": 1,
+            "columnas": 5,
+            "cero_x": 0.0,
+            "cero_y": 0.0,
+            "set_0_listo": true
         },
         {
             "nombre": "a",
             "pieza": "a",
             "modelo": "a",
-            "filas": 6,
+            "filas": 5,
             "cols": 5,
             "piezas": 30,
-            "piezas_por_jig": 30,
+            "piezas_por_jig": 25,
             "delta_x": 37.0,
             "delta_y": 35.0,
             "velocidad": 110,
@@ -107,7 +142,11 @@
             "cero_guardado_x": 0.0,
             "cero_guardado_y": 0.0,
             "cero_calibrado": true,
-            "corridas": 1
+            "corridas": 1,
+            "columnas": 5,
+            "cero_x": 0.0,
+            "cero_y": 0.0,
+            "set_0_listo": true
         },
         {
             "nombre": "Botón B",
@@ -116,7 +155,7 @@
             "filas": 4,
             "cols": 6,
             "piezas": 24,
-            "piezas_por_jig": 24,
+            "piezas_por_jig": 20,
             "delta_x": 30.0,
             "delta_y": 20.0,
             "velocidad": 115,
@@ -124,7 +163,11 @@
             "cero_guardado_x": 0.0,
             "cero_guardado_y": 0.0,
             "cero_calibrado": true,
-            "corridas": 1
+            "corridas": 1,
+            "columnas": 5,
+            "cero_x": 0.0,
+            "cero_y": 0.0,
+            "set_0_listo": true
         }
     ],
     "usuarios": [
@@ -157,6 +200,10 @@
             "tutorial_completado": true
         }
     ],
+    "cero_guardado_x": 0.0,
+    "cero_guardado_y": 0.0,
+    "velocidad": 120,
+    "paso_jog": 5.0,
     "ajustes_globales": {
         "plc_url": "opc.tcp://192.168.1.69:4840",
         "tiempo_muestreo_ms": 100,

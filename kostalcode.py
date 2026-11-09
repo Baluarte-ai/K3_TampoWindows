@@ -2410,7 +2410,7 @@ def abrir_teclado_numerico_paso():
         height=36,
         fg_color=COLOR_KOSTAL_NAVY,
         hover_color=COLOR_KOSTAL_ACCENT,
-        text_color="white",
+        text_color="white"
         corner_radius=8,
         command=_aplicar
     ).pack(side="right", fill="x", expand=True, padx=(4, 0))
