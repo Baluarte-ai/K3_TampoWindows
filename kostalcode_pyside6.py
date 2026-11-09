@@ -1587,7 +1587,9 @@ class OpcUaWorker(QThread):
         self.client = None
         self.connected = False
         self.nodes = {}
+        self.optional_nodes = {}
         self.write_queue = []
+        self._queue_lock = threading.Lock()
 
         self.server = None
         self.server_running = False
@@ -1614,6 +1616,9 @@ class OpcUaWorker(QThread):
             "AUTO": True,
         }
         self._last_pintado = False
+        self._last_pintado_edge_ts = 0.0
+        self._last_move_sent_ts = 0.0
+        self._last_vel_sent = None
 
     def request_retry_connection(self):
         self._Simulation_mode = False
@@ -1625,19 +1630,40 @@ class OpcUaWorker(QThread):
         self.connection_Changed.emit(False, "SIMULACIÓN")
 
     def enqueue_write(self, var_name, value):
-        self.write_queue.append((var_name, value))
+        with self._queue_lock:
+            self.write_queue.append((var_name, value))
 
     def enqueue_pulse(self, var_name, duration_ms=350):
-        self.write_queue.append(("__PULSE__", (var_name, duration_ms)))
+        with self._queue_lock:
+            self.write_queue.append(("__PULSE__", (var_name, duration_ms)))
 
-    def enqueue_move_xy(self, x_mm, y_mm, vel_mm_s=None, trigger_var="NUEVA_POSICION", pulse_ms=500):
-        if vel_mm_s is not None:
-            self.write_queue.append(("VELOCIDAD_X", float(vel_mm_s)))
-            self.write_queue.append(("VELOCIDAD_Y", float(vel_mm_s)))
-        self.write_queue.append(("POS_X", float(x_mm)))
-        self.write_queue.append(("POS_Y", float(y_mm)))
-        if trigger_var:
-            self.write_queue.append(("__PULSE__", (trigger_var, pulse_ms)))
+    def enqueue_move_xy(
+        self,
+        x_mm,
+        y_mm,
+        vel_mm_s=None,
+        trigger_var="NUEVA_POSICION",
+        pulse_ms=480,
+        also_pulse_cruzeta=True,
+        piece_label="",
+    ):
+        """
+        Encola un movimiento atómico XY con verificación de eco (Read-Back Handshake)
+        y flanco limpio False -> True para evitar pérdida o salto de piezas en CODESYS.
+        Reemplaza cualquier movimiento pendiente en cola aún no enviado para evitar atrasos.
+        """
+        cmd = {
+            "x_mm": float(x_mm),
+            "y_mm": float(y_mm),
+            "vel_mm_s": float(vel_mm_s) if vel_mm_s is not None else None,
+            "trigger_var": trigger_var,
+            "pulse_ms": int(pulse_ms),
+            "also_pulse_cruzeta": bool(also_pulse_cruzeta),
+            "piece_label": str(piece_label),
+        }
+        with self._queue_lock:
+            self.write_queue = [it for it in self.write_queue if it[0] != "__MOVE_XY__"]
+            self.write_queue.append(("__MOVE_XY__", cmd))
 
     def _start_opc_server(self):
         if not OPCUA_DISPONIBLE or self.server_running:
@@ -1708,9 +1734,18 @@ class OpcUaWorker(QThread):
             self.client = Client(url, timeout=2.5)
             self.client.connect()
             self.nodes.clear()
+            self.optional_nodes.clear()
             for key, suffix in self.NODE_MAP.items():
                 node_id = f"ns={ns};s={prefix}{suffix}"
                 self.nodes[key] = self.client.get_node(node_id)
+            for opt_key in ("NUEVA_POS", "M_PINTAR"):
+                try:
+                    opt_node = self.client.get_node(f"ns={ns};s={prefix}{opt_key}")
+                    opt_node.get_value()
+                    self.optional_nodes[opt_key] = opt_node
+                except Exception:
+                    pass
+            self._last_vel_sent = None
             self.connected = True
             log_debug_hmi(f"Conectado exitosamente al PLC WAGO en {url}")
             return True
@@ -1734,11 +1769,14 @@ class OpcUaWorker(QThread):
             except Exception:
                 pass
 
-        if not self.connected or not self.client or var_name not in self.nodes:
+        if not self.connected or not self.client:
+            return
+
+        node = self.nodes.get(var_name) or self.optional_nodes.get(var_name)
+        if node is None:
             return
 
         try:
-            node = self.nodes[var_name]
             if var_name in ("POS_X", "POS_Y", "HOME_X", "HOME_Y"):
                 # El PLC WAGO recibe coordenadas en centésimas de milímetro (Int32)
                 val_cent = int(round(float(value) * 100.0))
@@ -1750,9 +1788,103 @@ class OpcUaWorker(QThread):
                 dv = ua.DataValue(ua.Variant(bool(value), ua.VariantType.Boolean))
             node.set_value(dv)
         except Exception as e:
+            if var_name in self.optional_nodes:
+                self.optional_nodes.pop(var_name, None)
+                return
             log_debug_hmi(f"Error escribiendo {var_name}={value} en PLC: {e}")
             self.connected = False
             self.connection_Changed.emit(False, "DESCONECTADO")
+
+    def _execute_atomic_move_xy(self, cmd, active_pulses):
+        """
+        Ejecuta el protocolo industrial Read-Back Handshake hacia el PLC WAGO:
+        1. Baja señales de disparo previas (NUEVA_POSICION / NUEVA_POS / CRUZETA) para garantizar
+           un flanco ascendente limpio False -> True en el detector R_TRIG de CODESYS.
+        2. Escribe POS_X y POS_Y (y VELOCIDAD_X/Y solo si cambió).
+        3. Verifica por lectura de retorno (Read-Back Echo) que el PLC haya memorizado
+           las coordenadas exactas antes de disparar el pulso de movimiento.
+        4. Activa el pulso de disparo deduplicado en active_pulses.
+        """
+        t0 = time.perf_counter()
+        x_mm = float(cmd["x_mm"])
+        y_mm = float(cmd["y_mm"])
+        vel = cmd.get("vel_mm_s")
+        trig = cmd.get("trigger_var", "NUEVA_POSICION")
+        pulse_ms = int(cmd.get("pulse_ms", 480))
+        also_cruzeta = bool(cmd.get("also_pulse_cruzeta", True))
+        piece_label = cmd.get("piece_label", "")
+
+        target_px = int(round(x_mm * 100.0))
+        target_py = int(round(y_mm * 100.0))
+
+        # Paso 1: Si había un pulso activo en el mismo trigger, bajarlo a False primero
+        triggers_to_reset = [trig]
+        if trig == "NUEVA_POSICION":
+            triggers_to_reset.append("NUEVA_POS")
+        if also_cruzeta and "CRUZETA" not in triggers_to_reset:
+            triggers_to_reset.append("CRUZETA")
+
+        had_active_trigger = False
+        for tv in triggers_to_reset:
+            if tv in active_pulses or self.sim_state.get(tv, False):
+                had_active_trigger = True
+                active_pulses.pop(tv, None)
+                self._write_single_plc_var(tv, False)
+        if had_active_trigger and self.connected:
+            self.msleep(12)
+
+        # Paso 2: Escribir Velocidad (solo si cambió) y Coordenadas POS_X, POS_Y
+        if vel is not None:
+            vel_int = max(1, min(65535, int(round(float(vel)))))
+            if self._last_vel_sent != vel_int:
+                self._write_single_plc_var("VELOCIDAD_X", vel_int)
+                self._write_single_plc_var("VELOCIDAD_Y", vel_int)
+                self._last_vel_sent = vel_int
+
+        echo_ok = False
+        max_attempts = 3 if (self.connected and self.client) else 1
+        for attempt in range(1, max_attempts + 1):
+            self._write_single_plc_var("POS_X", x_mm)
+            self._write_single_plc_var("POS_Y", y_mm)
+            if not (self.connected and self.client):
+                echo_ok = True
+                break
+            try:
+                vals_echo = self.client.get_values([self.nodes["POS_X"], self.nodes["POS_Y"]])
+                rx_px = int(vals_echo[0] or 0)
+                rx_py = int(vals_echo[1] or 0)
+                if rx_px == target_px and rx_py == target_py:
+                    echo_ok = True
+                    break
+                log_debug_hmi(
+                    f"[DEBUG-ECO] Discrepancia intento {attempt}/{max_attempts} en {piece_label}: "
+                    f"Enviado=({target_px},{target_py}) vs PLC=({rx_px},{rx_py})"
+                )
+                self.msleep(15)
+            except Exception as e_echo:
+                log_debug_hmi(f"[DEBUG-ECO] Error verificando eco en {piece_label}: {e_echo}")
+                break
+
+        # Paso 3: Disparar flanco ascendente False -> True en el PLC
+        now = time.time()
+        exp_main = now + (pulse_ms / 1000.0)
+        if trig:
+            self._write_single_plc_var(trig, True)
+            active_pulses[trig] = exp_main
+            if trig == "NUEVA_POSICION" and "NUEVA_POS" in self.optional_nodes:
+                self._write_single_plc_var("NUEVA_POS", True)
+                active_pulses["NUEVA_POS"] = exp_main
+        if also_cruzeta and trig != "CRUZETA":
+            self._write_single_plc_var("CRUZETA", True)
+            active_pulses["CRUZETA"] = now + 0.34
+
+        self._last_move_sent_ts = time.time()
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        if piece_label:
+            log_debug_hmi(
+                f"[CICLO-TX] {piece_label} | Destino=(X={x_mm:.2f}, Y={y_mm:.2f} mm) "
+                f"| Eco_PLC={'OK' if echo_ok else 'REINTENTO'} | Trigger={trig} | dt={dt_ms:.1f}ms"
+            )
 
     def run(self):
         # Paso inicial de Splash Screen
@@ -1773,7 +1905,7 @@ class OpcUaWorker(QThread):
             self.connection_Changed.emit(False, "SIN CONEXIÓN")
             self.splash_progress.emit(100, f"No se detectó respuesta del PLC en {ip}:{port}.", True, False)
 
-        active_pulses = []  # lista de (var_name, expire_timestamp)
+        active_pulses = {}  # dict: var_name -> expire_timestamp (evita timers duplicados)
         last_reconnect_attempt = time.time()
 
         while self._running:
@@ -1788,25 +1920,35 @@ class OpcUaWorker(QThread):
                     self.connection_Changed.emit(False, "SIN CONEXIÓN")
                     self.splash_progress.emit(100, f"PLC no disponible en {ip}:{port}.", True, False)
 
-            # Procesar cola de escrituras
-            while self.write_queue:
-                item = self.write_queue.pop(0)
-                if item[0] == "__PULSE__":
+            # Procesar cola de escrituras de forma atómica
+            while True:
+                with self._queue_lock:
+                    if not self.write_queue:
+                        break
+                    item = self.write_queue.pop(0)
+
+                if item[0] == "__MOVE_XY__":
+                    self._execute_atomic_move_xy(item[1], active_pulses)
+                elif item[0] == "__PULSE__":
                     vname, dur_ms = item[1]
+                    if vname in active_pulses or self.sim_state.get(vname, False):
+                        self._write_single_plc_var(vname, False)
+                        if self.connected:
+                            self.msleep(10)
                     self._write_single_plc_var(vname, True)
-                    active_pulses.append((vname, time.time() + (dur_ms / 1000.0)))
+                    active_pulses[vname] = time.time() + (dur_ms / 1000.0)
                 else:
-                    self._write_single_plc_var(item[0], item[1])
+                    vname, val = item[0], item[1]
+                    if not val and vname in active_pulses:
+                        active_pulses.pop(vname, None)
+                    self._write_single_plc_var(vname, val)
 
             # Apagar pulsos vencidos
             now = time.time()
-            remaining_pulses = []
-            for vname, exp in active_pulses:
-                if now >= exp:
+            for vname in list(active_pulses.keys()):
+                if now >= active_pulses[vname]:
+                    active_pulses.pop(vname, None)
                     self._write_single_plc_var(vname, False)
-                else:
-                    remaining_pulses.append((vname, exp))
-            active_pulses = remaining_pulses
 
             # Lectura cíclica
             if self.connected and self.client:
@@ -1824,10 +1966,28 @@ class OpcUaWorker(QThread):
                             snap[k] = round(float(v or 0.0) / 100.0, 2)
                         else:
                             snap[k] = bool(v)
-                    # Detectar flanco ascendente de PINTADO
-                    if snap.get("PINTADO", False) and not self._last_pintado:
-                        self.cycle_step_completed.emit()
-                    self._last_pintado = snap.get("PINTADO", False)
+
+                    pintado_now = snap.get("PINTADO", False)
+                    # Detectar flanco ascendente de PINTADO con Handshake de limpieza y filtro anti-rebote
+                    if pintado_now and not self._last_pintado:
+                        # 1. Confirmar recepción al PLC limpiando PINTADO=False de inmediato
+                        self._write_single_plc_var("PINTADO", False)
+                        dt_since_edge = now - self._last_pintado_edge_ts
+                        dt_since_move = now - self._last_move_sent_ts
+                        if dt_since_edge >= 0.25 and dt_since_move >= 0.12:
+                            self._last_pintado_edge_ts = now
+                            log_debug_hmi(
+                                f"[CICLO-RX] Flanco PINTADO confirmado en PLC (RX X={snap.get('POS_X', 0.0):.2f}, "
+                                f"Y={snap.get('POS_Y', 0.0):.2f} mm, dt_move={dt_since_move*1000.0:.0f}ms) -> Avanzando"
+                            )
+                            self.cycle_step_completed.emit()
+                        else:
+                            log_debug_hmi(
+                                f"[CICLO-FILTRO] Pulso espurio/rebote de PINTADO ignorado para evitar salto de pieza "
+                                f"(dt_edge={dt_since_edge*1000.0:.0f}ms, dt_move={dt_since_move*1000.0:.0f}ms)"
+                            )
+                        pintado_now = False
+                    self._last_pintado = pintado_now
                     self.telemetry_updated.emit(snap)
                 except Exception as e:
                     log_debug_hmi(f"Pérdida de enlace OPC UA durante lectura: {e}")
@@ -1842,7 +2002,7 @@ class OpcUaWorker(QThread):
                 snap = dict(self.sim_state)
                 self.telemetry_updated.emit(snap)
 
-            self.msleep(80)
+            self.msleep(65)
 
         # Cierre limpio
         if self.client:
@@ -4100,8 +4260,11 @@ class KostalHmiWindow(QMainWindow):
         Calcula las coordenadas de cada cavidad de la matriz (patrón vertical en
         serpiente u horizontal) llevando cada cavidad al Punto 0 (SET 0) dentro
         de los límites físicos X:[0..88] mm, Y:[0..200] mm.
+        Detecta y registra si alguna cavidad queda truncada por el límite físico
+        (lo cual puede provocar coordenadas duplicadas si (cols-1)*dx > 88 mm).
         """
         self.matriz_coordenadas = []
+        self.matriz_truncada_info = ""
         x0 = self.cero_guardado_x
         y0 = self.cero_guardado_y
         dx = abs(self.matriz_delta_x)
@@ -4127,19 +4290,49 @@ class KostalHmiWindow(QMainWindow):
         else:
             dir_y = -1.0
 
+        piezas_truncadas = []
         if self.patron_pintado == "vertical":
             for c in range(self.matriz_cols):
                 filas_iter = range(self.matriz_filas) if (c % 2 == 0) else reversed(range(self.matriz_filas))
                 for r in filas_iter:
-                    x = limitar_coord_x(x0 + dir_x * (c * dx))
-                    y = limitar_coord_y(y0 + dir_y * (r * dy))
+                    raw_x = x0 + dir_x * (c * dx)
+                    raw_y = y0 + dir_y * (r * dy)
+                    x = limitar_coord_x(raw_x)
+                    y = limitar_coord_y(raw_y)
+                    seq_num = len(self.matriz_coordenadas) + 1
+                    if seq_num <= self.piezas_por_jig_actual and (abs(x - raw_x) > 0.01 or abs(y - raw_y) > 0.01):
+                        piezas_truncadas.append(f"P{seq_num:02d}(C{c+1}F{r+1}: {raw_x:.1f},{raw_y:.1f}->{x:.1f},{y:.1f})")
                     self.matriz_coordenadas.append((round(x, 2), round(y, 2)))
         else:
             for r in range(self.matriz_filas):
                 for c in range(self.matriz_cols):
-                    x = limitar_coord_x(x0 + dir_x * (c * dx))
-                    y = limitar_coord_y(y0 + dir_y * (r * dy))
+                    raw_x = x0 + dir_x * (c * dx)
+                    raw_y = y0 + dir_y * (r * dy)
+                    x = limitar_coord_x(raw_x)
+                    y = limitar_coord_y(raw_y)
+                    seq_num = len(self.matriz_coordenadas) + 1
+                    if seq_num <= self.piezas_por_jig_actual and (abs(x - raw_x) > 0.01 or abs(y - raw_y) > 0.01):
+                        piezas_truncadas.append(f"P{seq_num:02d}(C{c+1}F{r+1}: {raw_x:.1f},{raw_y:.1f}->{x:.1f},{y:.1f})")
                     self.matriz_coordenadas.append((round(x, 2), round(y, 2)))
+
+        # Detectar coordenadas consecutivas idénticas dentro de las piezas activas del jig
+        duplicadas_consecutivas = []
+        activas_coords = self.matriz_coordenadas[: self.piezas_por_jig_actual]
+        for idx_c in range(1, len(activas_coords)):
+            if activas_coords[idx_c] == activas_coords[idx_c - 1]:
+                duplicadas_consecutivas.append(f"P{idx_c:02d}==P{idx_c+1:02d} en {activas_coords[idx_c]}")
+
+        if piezas_truncadas:
+            max_dx_sug = round(COORD_X_MAX / max(1, self.matriz_cols - 1), 2) if self.matriz_cols > 1 else COORD_X_MAX
+            self.matriz_truncada_info = (
+                f"LÍMITE FÍSICO X={COORD_X_MAX:.0f}mm EXCEDIDO (Recorrido X={recorrido_x:.1f}mm, máx paso X sugerido <= {max_dx_sug:.1f}mm)"
+            )
+            log_debug_hmi(
+                f"[ADVERTENCIA-MATRIZ] Receta '{self.config.get('receta_activa', '')}': "
+                f"Recorrido X={recorrido_x:.1f}mm (máx {COORD_X_MAX}mm), Y={recorrido_y:.1f}mm (máx {COORD_Y_MAX}mm). "
+                f"Cavidades truncadas al tope físico: {', '.join(piezas_truncadas)} | "
+                f"Coordenadas consecutivas colapsadas: {', '.join(duplicadas_consecutivas) if duplicadas_consecutivas else 'ninguna'}"
+            )
 
         total_cells = self.matriz_filas * self.matriz_cols
         if len(self.estados_piezas) != total_cells:
@@ -4381,9 +4574,21 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_matriz_dim_badge.setText(
             f"MATRIZ: {self.matriz_filas} × {self.matriz_cols} ({self.piezas_por_jig_actual} PZ/JIG)"
         )
-        self.lbl_matriz_dist_badge.setText(
-            f"X: {self.matriz_delta_x:.1f} mm | Y: {self.matriz_delta_y:.1f} mm | Diag: {self.matriz_dist_diag:.1f} mm"
-        )
+        trunc_warn = getattr(self, "matriz_truncada_info", "")
+        if trunc_warn:
+            self.lbl_matriz_dist_badge.setText(
+                f"X: {self.matriz_delta_x:.1f} mm | Y: {self.matriz_delta_y:.1f} mm | {trunc_warn}"
+            )
+            self.lbl_matriz_dist_badge.setStyleSheet(
+                "background-color: #FEF2F2; color: #DC2626; font-size: 11px; font-weight: 900; padding: 4px 10px; border: 1px solid #EF4444; border-radius: 6px;"
+            )
+        else:
+            self.lbl_matriz_dist_badge.setText(
+                f"X: {self.matriz_delta_x:.1f} mm | Y: {self.matriz_delta_y:.1f} mm | Diag: {self.matriz_dist_diag:.1f} mm"
+            )
+            self.lbl_matriz_dist_badge.setStyleSheet(
+                f"background-color: #F1F5F9; color: {COLOR_TEXT_SECONDARY}; font-size: 11px; font-weight: 800; padding: 4px 10px; border: 1px solid #CBD5E1; border-radius: 6px;"
+            )
         self.btn_patron_toggle.setText(
             self._tr("patron_vert") if self.patron_pintado == "vertical" else self._tr("patron_horiz")
         )
@@ -4569,29 +4774,47 @@ class KostalHmiWindow(QMainWindow):
                 )
                 return
 
-            # Iniciar ciclo desde pieza actual (o reiniciar si ya terminó lote)
-            if self.piezas_realizadas_lote >= self.piezas_por_jig_actual:
+            # Sincronización estricta entre indice_matriz_actual y piezas_realizadas_lote:
+            # Evita que clics previos en el fixture o pruebas en modo manual salten las primeras piezas
+            if self.piezas_realizadas_lote >= self.piezas_por_jig_actual or self.piezas_realizadas_lote <= 0:
                 self.indice_matriz_actual = 0
                 self.piezas_realizadas_lote = 0
                 self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
+            else:
+                # Reanudación de lote pausado a mitad del Jig: alinear índice exactamente con piezas_realizadas_lote
+                self.indice_matriz_actual = min(self.piezas_realizadas_lote, self.piezas_por_jig_actual - 1)
+                total_cells = self.matriz_filas * self.matriz_cols
+                self.estados_piezas = [
+                    "ok" if i < self.indice_matriz_actual else "pendiente"
+                    for i in range(total_cells)
+                ]
 
             self.estado_pintando = True
             self.pasada_actual_pieza = 1
             if self.indice_matriz_actual < len(self.estados_piezas):
                 self.estados_piezas[self.indice_matriz_actual] = "activa"
 
-            self.opc_worker.enqueue_write("PINTAR", True)
+            # Limpiar handshake PINTADO residual en el PLC, enviar primero coordenadas de la pieza #1
+            # y posteriormente habilitar la bandera maestra PINTAR=True para que el PLC nunca opere
+            # con la coordenada anterior.
+            self.opc_worker.enqueue_write("PINTADO", False)
             self._enviar_pieza_actual_al_plc()
+            self.opc_worker.enqueue_write("PINTAR", True)
 
             if not self.plc_conectado:
                 self.sim_cycle_timer.start(1100)
 
-            log_debug_hmi(f"Ciclo de pintado INICIADO en pieza #{self.indice_matriz_actual + 1:02d}")
+            log_debug_hmi(
+                f"Ciclo de pintado INICIADO en pieza #{self.indice_matriz_actual + 1:02d}/{self.piezas_por_jig_actual:02d} "
+                f"(Receta='{self.config.get('receta_activa', '')}')"
+            )
         else:
             self.estado_pintando = False
             self.sim_cycle_timer.stop()
             self.opc_worker.enqueue_write("PINTAR", False)
-            log_debug_hmi("Ciclo de pintado PAUSADO/DETENIDO por el operador.")
+            log_debug_hmi(
+                f"Ciclo de pintado PAUSADO/DETENIDO por el operador en pieza #{self.indice_matriz_actual + 1:02d}/{self.piezas_por_jig_actual:02d}."
+            )
 
         self._refresh_all_operator_ui()
 
@@ -4604,9 +4827,21 @@ class KostalHmiWindow(QMainWindow):
         self.pos_actual_y = ty
         self.inp_coord_x.setText(f"{tx:.1f}")
         self.inp_coord_y.setText(f"{ty:.1f}")
-        self.opc_worker.enqueue_move_xy(tx, ty, self.velocidad_actual, trigger_var="NUEVA_POSICION", pulse_ms=500)
+        etiqueta_pieza = (
+            f"Pieza #{idx + 1:02d}/{self.piezas_por_jig_actual:02d} "
+            f"(Pasada {self.pasada_actual_pieza}/{self.pasadas_tampo})"
+        )
+        self.opc_worker.enqueue_move_xy(
+            tx,
+            ty,
+            self.velocidad_actual,
+            trigger_var="NUEVA_POSICION",
+            pulse_ms=500,
+            also_pulse_cruzeta=True,
+            piece_label=etiqueta_pieza,
+        )
         log_debug_hmi(
-            f"Enviando pieza #{idx + 1:02d} (Pasada {self.pasada_actual_pieza}/{self.pasadas_tampo}) -> X={tx:.2f}, Y={ty:.2f} mm"
+            f"Enviando {etiqueta_pieza} -> X={tx:.2f}, Y={ty:.2f} mm"
         )
 
     def _tick_sim_cycle(self):
@@ -4621,11 +4856,16 @@ class KostalHmiWindow(QMainWindow):
         # Verificar si faltan pasadas de tampo en la misma pieza
         if self.pasada_actual_pieza < self.pasadas_tampo:
             self.pasada_actual_pieza += 1
+            log_debug_hmi(
+                f"[CICLO-PASADA] Segunda pasada en Pieza #{self.indice_matriz_actual + 1:02d}/{self.piezas_por_jig_actual:02d} "
+                f"({self.pasada_actual_pieza}/{self.pasadas_tampo})"
+            )
             self._enviar_pieza_actual_al_plc()
             self._refresh_all_operator_ui()
             return
 
         # Marcar pieza actual como completada OK y contabilizar automáticamente
+        pieza_completada_num = self.indice_matriz_actual + 1
         if self.indice_matriz_actual < len(self.estados_piezas):
             self.estados_piezas[self.indice_matriz_actual] = "ok"
 
@@ -4635,11 +4875,20 @@ class KostalHmiWindow(QMainWindow):
         self.config["produccion_total"] = self.produccion_total
         self.config["produccion_ok"] = self.produccion_ok
 
-        # Verificar si se completó el Jig entero (retorno automático a Home y reinicio de matriz)
-        if self.piezas_realizadas_lote >= self.piezas_por_jig_actual:
+        log_debug_hmi(
+            f"[CICLO-OK] Pieza #{pieza_completada_num:02d}/{self.piezas_por_jig_actual:02d} completada "
+            f"(Lote={self.piezas_realizadas_lote}/{self.piezas_por_jig_actual}, Total={self.produccion_total})"
+        )
+
+        # Verificar si se completó el Jig entero (tanto por contador de lote como por índice de matriz)
+        if (
+            self.piezas_realizadas_lote >= self.piezas_por_jig_actual
+            or (self.indice_matriz_actual + 1) >= self.piezas_por_jig_actual
+        ):
             self.estado_pintando = False
             self.sim_cycle_timer.stop()
             self.opc_worker.enqueue_write("PINTAR", False)
+            self.opc_worker.enqueue_write("PINTADO", False)
             DB_MANAGER.registrar_ciclo_produccion(
                 self.config,
                 self.usuario_actual,
@@ -4657,7 +4906,7 @@ class KostalHmiWindow(QMainWindow):
             QTimer.singleShot(1200, self._reiniciar_matriz_post_ciclo)
             return
 
-        # Avanzar a la siguiente cavidad
+        # Avanzar exactamente a la siguiente cavidad en secuencia
         self.indice_matriz_actual += 1
         self.pasada_actual_pieza = 1
         if self.indice_matriz_actual < len(self.estados_piezas):
@@ -4685,9 +4934,14 @@ class KostalHmiWindow(QMainWindow):
     def _on_fixture_cavity_clicked(self, seq_idx):
         if seq_idx >= self.piezas_por_jig_actual:
             return
+        if self.estado_pintando:
+            return
         if not self.estado_manual:
-            self.indice_matriz_actual = seq_idx
-            self._refresh_all_operator_ui()
+            # En Modo AUTO no se altera indice_matriz_actual al tocar el lienzo para evitar
+            # que el siguiente ciclo automático comience a mitad de matriz y se salte piezas.
+            if seq_idx < len(self.matriz_coordenadas):
+                cx, cy = self.matriz_coordenadas[seq_idx]
+                self.lbl_tele_destino.setText(f"VISTA P{seq_idx + 1:02d}: X={cx:.1f} Y={cy:.1f} (MODO AUTO)")
             return
         if not self._verificar_seguridad_antes_de_operar():
             return
@@ -4736,6 +4990,13 @@ class KostalHmiWindow(QMainWindow):
             return
         self.estado_manual = not self.estado_manual
         self.estado_auto = not self.estado_manual
+        if self.estado_auto:
+            # Al regresar de Modo MANUAL a Modo AUTO, reiniciar puntero de recorrido a la pieza #1
+            # para que cualquier prueba manual de cavidades no desfase el inicio del ciclo automático.
+            self.indice_matriz_actual = 0
+            self.pasada_actual_pieza = 1
+            self.piezas_realizadas_lote = 0
+            self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
         self.opc_worker.enqueue_write("MANUAL", self.estado_manual)
         self.opc_worker.enqueue_write("AUTO", self.estado_auto)
         self._refresh_all_operator_ui()
@@ -5437,11 +5698,27 @@ class KostalHmiWindow(QMainWindow):
         self.cargar_receta_por_nombre(nuevo_nom, silencioso=True)
         self._refresh_admin_recipes_list()
         self.combo_admin_rec.setCurrentText(nuevo_nom)
-        self.overlay.show_message(
-            "Programa Guardado en Base de Datos",
-            f"El programa '{nuevo_nom}' fue {accion_msg}, activado y respaldado en la Base de Datos Local y Excel Maestro.",
-            "ok",
-        )
+
+        recorrido_x = (c - 1) * dx
+        recorrido_y = (f - 1) * dy
+        if recorrido_x > COORD_X_MAX or recorrido_y > COORD_Y_MAX:
+            max_dx = round(COORD_X_MAX / max(1, c - 1), 2) if c > 1 else COORD_X_MAX
+            max_dy = round(COORD_Y_MAX / max(1, f - 1), 2) if f > 1 else COORD_Y_MAX
+            self.overlay.show_message(
+                "Programa Guardado con Advertencia de Recorrido Físico",
+                f"El programa '{nuevo_nom}' fue {accion_msg}, pero su recorrido total "
+                f"(X={recorrido_x:.1f} mm / máx {COORD_X_MAX:.0f} mm, Y={recorrido_y:.1f} mm / máx {COORD_Y_MAX:.0f} mm) "
+                f"excede la carrera física del eje.\n\n"
+                f"Las últimas columnas/filas se truncarán al tope (88 mm / 200 mm) y aparentarán saltar cavidades.\n"
+                f"Para {c} columnas y {f} filas se recomienda Paso X <= {max_dx:.1f} mm y Paso Y <= {max_dy:.1f} mm.",
+                "warn",
+            )
+        else:
+            self.overlay.show_message(
+                "Programa Guardado en Base de Datos",
+                f"El programa '{nuevo_nom}' fue {accion_msg}, activado y respaldado en la Base de Datos Local y Excel Maestro.",
+                "ok",
+            )
 
     # ---------------- TAB 1: ESTADÍSTICAS Y EXPORTACIÓN EXCEL ----------------
     def _build_admin_tab_stats(self):
