@@ -297,6 +297,10 @@ CONFIG_DEFAULT = {
             "set_0_listo": True,
             "vel_x": 100.0,
             "vel_y": 100.0,
+            "corridas": 0,
+            "piezas_producidas_total": 0,
+            "piezas_producidas_ok": 0,
+            "piezas_producidas_nok": 0,
             "imagen": "pieza_default.png",
         },
         {
@@ -443,6 +447,24 @@ def _normalizar_lista_recetas(recetas):
         cal_val = bool(rec.get("cero_calibrado", rec.get("set_0_listo", True)))
         rec["cero_calibrado"] = cal_val
         rec["set_0_listo"] = cal_val
+
+        # Conteo de producción acumulado específico por receta
+        try:
+            corr_val = max(0, int(rec.get("corridas", 0) or 0))
+        except (ValueError, TypeError):
+            corr_val = 0
+        try:
+            tot_rec = max(0, int(rec.get("piezas_producidas_total", 0) or 0))
+        except (ValueError, TypeError):
+            tot_rec = 0
+        try:
+            nok_rec = max(0, min(tot_rec, int(rec.get("piezas_producidas_nok", 0) or 0)))
+        except (ValueError, TypeError):
+            nok_rec = 0
+        rec["corridas"] = corr_val
+        rec["piezas_producidas_total"] = tot_rec
+        rec["piezas_producidas_nok"] = nok_rec
+        rec["piezas_producidas_ok"] = max(0, tot_rec - nok_rec)
     return recetas
 
 
@@ -501,7 +523,24 @@ class KostalDatabaseManager:
                             cero_calibrado INTEGER NOT NULL DEFAULT 1,
                             velocidad REAL NOT NULL DEFAULT 100.0,
                             imagen TEXT DEFAULT '',
+                            corridas INTEGER NOT NULL DEFAULT 0,
+                            piezas_producidas_total INTEGER NOT NULL DEFAULT 0,
+                            piezas_producidas_ok INTEGER NOT NULL DEFAULT 0,
+                            piezas_producidas_nok INTEGER NOT NULL DEFAULT 0,
                             actualizado_en TEXT NOT NULL
+                        );
+
+                        CREATE TABLE IF NOT EXISTS produccion_por_receta (
+                            receta TEXT PRIMARY KEY,
+                            pieza TEXT NOT NULL DEFAULT '',
+                            modelo TEXT NOT NULL DEFAULT '',
+                            piezas_por_jig INTEGER NOT NULL DEFAULT 1,
+                            ciclos_completados INTEGER NOT NULL DEFAULT 0,
+                            total_piezas INTEGER NOT NULL DEFAULT 0,
+                            piezas_ok INTEGER NOT NULL DEFAULT 0,
+                            piezas_nok INTEGER NOT NULL DEFAULT 0,
+                            calidad_pct REAL NOT NULL DEFAULT 100.0,
+                            ultima_actualizacion TEXT NOT NULL
                         );
 
                         CREATE TABLE IF NOT EXISTS informes_horarios (
@@ -566,6 +605,23 @@ class KostalDatabaseManager:
                         );
                         """
                     )
+                    # Migración no destructiva para bases de datos existentes
+                    cols_exist = {
+                        r["name"]
+                        for r in conn.execute("PRAGMA table_info(recetas_programas)").fetchall()
+                    }
+                    migraciones_receta = [
+                        ("corridas", "INTEGER NOT NULL DEFAULT 0"),
+                        ("piezas_producidas_total", "INTEGER NOT NULL DEFAULT 0"),
+                        ("piezas_producidas_ok", "INTEGER NOT NULL DEFAULT 0"),
+                        ("piezas_producidas_nok", "INTEGER NOT NULL DEFAULT 0"),
+                    ]
+                    for col_nom, col_ddl in migraciones_receta:
+                        if col_nom not in cols_exist:
+                            conn.execute(
+                                f"ALTER TABLE recetas_programas ADD COLUMN {col_nom} {col_ddl}"
+                            )
+                    conn.commit()
             except Exception as e:
                 print(f"Error inicializando esquema SQLite ({self.db_path}): {e}")
 
@@ -591,9 +647,14 @@ class KostalDatabaseManager:
                         if str(r.get("nombre", "")).strip()
                     }
 
-                    # Recuperar recetas que estén en SQLite y falten en JSON
+                    # Recuperar recetas y contadores que estén en SQLite
                     for row in rows_rec:
                         nom = row["nombre"]
+                        row_keys = set(row.keys())
+                        corr_db = int(row["corridas"]) if "corridas" in row_keys else 0
+                        tot_db = int(row["piezas_producidas_total"]) if "piezas_producidas_total" in row_keys else 0
+                        nok_db = int(row["piezas_producidas_nok"]) if "piezas_producidas_nok" in row_keys else 0
+                        ok_db = int(row["piezas_producidas_ok"]) if "piezas_producidas_ok" in row_keys else max(0, tot_db - nok_db)
                         if nom not in mapa_json:
                             rec_db = {
                                 "nombre": nom,
@@ -618,9 +679,22 @@ class KostalDatabaseManager:
                                 "vel_x": float(row["velocidad"]),
                                 "vel_y": float(row["velocidad"]),
                                 "imagen": row["imagen"] or "pieza_default.png",
+                                "corridas": corr_db,
+                                "piezas_producidas_total": tot_db,
+                                "piezas_producidas_ok": ok_db,
+                                "piezas_producidas_nok": nok_db,
                             }
                             recetas_json.append(rec_db)
                             mapa_json[nom] = rec_db
+                        else:
+                            rec_j = mapa_json[nom]
+                            tot_j = int(rec_j.get("piezas_producidas_total", 0) or 0)
+                            if tot_db > tot_j:
+                                rec_j["piezas_producidas_total"] = tot_db
+                                rec_j["piezas_producidas_nok"] = nok_db
+                                rec_j["piezas_producidas_ok"] = ok_db
+                            if corr_db > int(rec_j.get("corridas", 0) or 0):
+                                rec_j["corridas"] = corr_db
 
                     cfg["recetas"] = _normalizar_lista_recetas(recetas_json)
 
@@ -755,13 +829,19 @@ class KostalDatabaseManager:
             cal = 1 if bool(rec.get("set_0_listo", rec.get("cero_calibrado", True))) else 0
             vel = float(rec.get("vel_x", rec.get("velocidad", 100.0)))
             img = str(rec.get("imagen", "pieza_default.png"))
+            corr = max(0, int(rec.get("corridas", 0) or 0))
+            tot_p = max(0, int(rec.get("piezas_producidas_total", 0) or 0))
+            nok_p = max(0, min(tot_p, int(rec.get("piezas_producidas_nok", 0) or 0)))
+            ok_p = max(0, tot_p - nok_p)
+            cal_p = round((ok_p / tot_p * 100.0), 1) if tot_p > 0 else 100.0
             conn.execute(
                 """
                 INSERT INTO recetas_programas (
                     nombre, pieza, modelo, filas, columnas, piezas_por_jig,
                     delta_x, delta_y, cero_x, cero_y, cero_calibrado,
-                    velocidad, imagen, actualizado_en
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    velocidad, imagen, corridas, piezas_producidas_total,
+                    piezas_producidas_ok, piezas_producidas_nok, actualizado_en
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(nombre) DO UPDATE SET
                     pieza=excluded.pieza,
                     modelo=excluded.modelo,
@@ -775,14 +855,44 @@ class KostalDatabaseManager:
                     cero_calibrado=excluded.cero_calibrado,
                     velocidad=excluded.velocidad,
                     imagen=excluded.imagen,
+                    corridas=excluded.corridas,
+                    piezas_producidas_total=excluded.piezas_producidas_total,
+                    piezas_producidas_ok=excluded.piezas_producidas_ok,
+                    piezas_producidas_nok=excluded.piezas_producidas_nok,
                     actualizado_en=excluded.actualizado_en
                 """,
-                (nom, pieza, modelo, filas, cols, pz, dx, dy, cx, cy, cal, vel, img, ahora),
+                (
+                    nom, pieza, modelo, filas, cols, pz, dx, dy, cx, cy, cal,
+                    vel, img, corr, tot_p, ok_p, nok_p, ahora
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO produccion_por_receta (
+                    receta, pieza, modelo, piezas_por_jig, ciclos_completados,
+                    total_piezas, piezas_ok, piezas_nok, calidad_pct, ultima_actualizacion
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(receta) DO UPDATE SET
+                    pieza=excluded.pieza,
+                    modelo=excluded.modelo,
+                    piezas_por_jig=excluded.piezas_por_jig,
+                    ciclos_completados=excluded.ciclos_completados,
+                    total_piezas=excluded.total_piezas,
+                    piezas_ok=excluded.piezas_ok,
+                    piezas_nok=excluded.piezas_nok,
+                    calidad_pct=excluded.calidad_pct,
+                    ultima_actualizacion=excluded.ultima_actualizacion
+                """,
+                (nom, pieza, modelo, pz, corr, tot_p, ok_p, nok_p, cal_p, ahora),
             )
         if nombres_vigentes:
             placeholders = ",".join("?" for _ in nombres_vigentes)
             conn.execute(
                 f"DELETE FROM recetas_programas WHERE nombre NOT IN ({placeholders})",
+                tuple(nombres_vigentes),
+            )
+            conn.execute(
+                f"DELETE FROM produccion_por_receta WHERE receta NOT IN ({placeholders})",
                 tuple(nombres_vigentes),
             )
 
@@ -813,7 +923,7 @@ class KostalDatabaseManager:
                 tuple(ids_vigentes),
             )
 
-    def sincronizar_configuracion(self, cfg: dict):
+    def sincronizar_configuracion(self, cfg: dict, exportar_excel: bool = True):
         """Guarda recetas, usuarios y KPIs actuales en SQLite y actualiza los archivos Excel/CSV."""
         with self._lock:
             ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -824,7 +934,8 @@ class KostalDatabaseManager:
                     conn.commit()
             except Exception as e:
                 print(f"Error en sincronizar_configuracion SQLite: {e}")
-            self.exportar_excel_y_csv_automatico(cfg)
+            if exportar_excel:
+                self.exportar_excel_y_csv_automatico(cfg)
 
     def actualizar_kpi_tiempo_real(
         self,
@@ -961,6 +1072,7 @@ class KostalDatabaseManager:
                             cal,
                         ),
                     )
+                    self._upsert_recetas_conn(conn, cfg.get("recetas", []), fh)
                     conn.commit()
             except Exception as e:
                 print(f"Error registrando ciclo en SQLite: {e}")
@@ -1095,6 +1207,12 @@ class KostalDatabaseManager:
                             "SELECT * FROM recetas_programas ORDER BY id ASC"
                         ).fetchall()
                     ]
+                    resumen_recetas = [
+                        dict(r)
+                        for r in conn.execute(
+                            "SELECT * FROM produccion_por_receta ORDER BY total_piezas DESC, receta ASC"
+                        ).fetchall()
+                    ]
                     kpis = [
                         dict(r)
                         for r in conn.execute(
@@ -1116,6 +1234,15 @@ class KostalDatabaseManager:
                 informes,
             )
             self._write_csv_mirror(
+                os.path.join(self.db_dir, "produccion_por_receta.csv"),
+                [
+                    "receta", "pieza", "modelo", "piezas_por_jig", "ciclos_completados",
+                    "total_piezas", "piezas_ok", "piezas_nok", "calidad_pct",
+                    "ultima_actualizacion",
+                ],
+                resumen_recetas,
+            )
+            self._write_csv_mirror(
                 os.path.join(self.db_dir, "ciclos_produccion.csv"),
                 [
                     "id", "fecha_hora", "fecha", "hora", "estacion", "usuario",
@@ -1129,7 +1256,9 @@ class KostalDatabaseManager:
                 [
                     "id", "nombre", "pieza", "modelo", "filas", "columnas",
                     "piezas_por_jig", "delta_x", "delta_y", "cero_x", "cero_y",
-                    "cero_calibrado", "velocidad", "imagen", "actualizado_en",
+                    "cero_calibrado", "velocidad", "corridas",
+                    "piezas_producidas_total", "piezas_producidas_ok",
+                    "piezas_producidas_nok", "imagen", "actualizado_en",
                 ],
                 recetas,
             )
@@ -1215,7 +1344,36 @@ class KostalDatabaseManager:
                     [8, 21, 13, 11, 16, 20, 15, 28, 24, 14, 14, 14, 16, 13, 15],
                 )
 
-                # Hoja 2: Ciclos_Automaticos
+                # Hoja 2: Resumen_Por_Receta (Número de piezas producidas por cada receta)
+                ws_res_rec = wb.create_sheet(title="Resumen_Por_Receta")
+                headers_res_rec = [
+                    "Programa / Receta", "Pieza", "Modelo", "Piezas por Jig",
+                    "Ciclos Completados", "Total Piezas Producidas", "Piezas OK",
+                    "Piezas NO OK", "% Calidad", "Última Actualización",
+                ]
+                rows_res_rec = [
+                    [
+                        r.get("receta", ""),
+                        r.get("pieza", ""),
+                        r.get("modelo", ""),
+                        int(r.get("piezas_por_jig", 1)),
+                        int(r.get("ciclos_completados", 0)),
+                        int(r.get("total_piezas", 0)),
+                        int(r.get("piezas_ok", 0)),
+                        int(r.get("piezas_nok", 0)),
+                        f"{float(r.get('calidad_pct', 100.0)):.1f}%",
+                        r.get("ultima_actualizacion", ""),
+                    ]
+                    for r in resumen_recetas
+                ]
+                _style_worksheet(
+                    ws_res_rec,
+                    headers_res_rec,
+                    rows_res_rec,
+                    [30, 24, 14, 15, 18, 22, 13, 15, 13, 21],
+                )
+
+                # Hoja 3: Ciclos_Automaticos
                 ws_cic = wb.create_sheet(title="Ciclos_Automaticos")
                 headers_cic = [
                     "ID Ciclo", "Fecha / Hora", "Fecha", "Hora", "Estación", "Operador",
@@ -1248,13 +1406,15 @@ class KostalDatabaseManager:
                     [10, 21, 13, 11, 16, 20, 28, 24, 14, 14, 16, 15, 17, 13],
                 )
 
-                # Hoja 3: Catalogo_Programas
+                # Hoja 4: Catalogo_Programas
                 ws_rec = wb.create_sheet(title="Catalogo_Programas")
                 headers_rec = [
                     "ID", "Nombre del Programa / Receta", "Pieza", "Modelo",
                     "Filas", "Columnas", "Piezas por Jig", "Dist. X (mm)",
                     "Dist. Y (mm)", "Punto 0 X (mm)", "Punto 0 Y (mm)",
-                    "Set 0 Calibrado", "Velocidad (mm/s)", "Archivo Imagen", "Última Actualización",
+                    "Set 0 Calibrado", "Velocidad (mm/s)", "Ciclos",
+                    "Producidas Total", "Producidas OK", "Producidas NO OK",
+                    "Archivo Imagen", "Última Actualización",
                 ]
                 rows_rec = [
                     [
@@ -1271,6 +1431,10 @@ class KostalDatabaseManager:
                         float(r.get("cero_y", 0.0)),
                         "SÍ" if r.get("cero_calibrado", 1) else "NO",
                         float(r.get("velocidad", 100.0)),
+                        int(r.get("corridas", 0)),
+                        int(r.get("piezas_producidas_total", 0)),
+                        int(r.get("piezas_producidas_ok", 0)),
+                        int(r.get("piezas_producidas_nok", 0)),
                         r.get("imagen", ""),
                         r.get("actualizado_en", ""),
                     ]
@@ -1280,7 +1444,7 @@ class KostalDatabaseManager:
                     ws_rec,
                     headers_rec,
                     rows_rec,
-                    [8, 30, 24, 14, 10, 11, 15, 14, 14, 15, 15, 16, 16, 24, 21],
+                    [8, 30, 24, 14, 10, 11, 15, 14, 14, 15, 15, 16, 16, 11, 16, 14, 16, 24, 21],
                 )
 
                 # Hoja 4: KPI_Tiempo_Real
@@ -1381,12 +1545,12 @@ def cargar_configuracion_disco():
     return cfg
 
 
-def guardar_configuracion_disco(cfg):
+def guardar_configuracion_disco(cfg, exportar_excel=True):
     try:
         cfg["recetas"] = _normalizar_lista_recetas(cfg.get("recetas", []))
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=4, ensure_ascii=False)
-        DB_MANAGER.sincronizar_configuracion(cfg)
+        DB_MANAGER.sincronizar_configuracion(cfg, exportar_excel=exportar_excel)
         return True
     except Exception as e:
         print(f"Error guardando {CONFIG_FILE}: {e}")
@@ -2575,11 +2739,14 @@ class InWindowOverlayLayer(QWidget):
         lbl_p_mat.setStyleSheet("font-size: 12px; font-weight: 700; color: #0284C7;")
         lbl_p_dist = QLabel()
         lbl_p_dist.setStyleSheet("font-size: 12px; color: #475569;")
+        lbl_p_prod = QLabel()
+        lbl_p_prod.setStyleSheet(f"font-size: 12px; font-weight: 800; color: {COLOR_BRAND_PRIMARY};")
         lbl_p_set0 = QLabel()
         info_col.addWidget(lbl_p_nom)
         info_col.addWidget(lbl_p_mod)
         info_col.addWidget(lbl_p_mat)
         info_col.addWidget(lbl_p_dist)
+        info_col.addWidget(lbl_p_prod)
         info_col.addWidget(lbl_p_set0)
         p_lay.addLayout(info_col, 1)
         lay.addWidget(preview_card)
@@ -2589,10 +2756,15 @@ class InWindowOverlayLayer(QWidget):
             if not rec:
                 return
             pz = obtener_piezas_por_jig_receta(rec)
+            tot_r = int(rec.get("piezas_producidas_total", 0) or 0)
+            ok_r = int(rec.get("piezas_producidas_ok", 0) or 0)
+            nok_r = int(rec.get("piezas_producidas_nok", 0) or 0)
+            cic_r = int(rec.get("corridas", 0) or 0)
             lbl_p_nom.setText(f"Pieza: {rec.get('pieza', '-')}")
             lbl_p_mod.setText(f"Modelo: {rec.get('modelo', '-')}  |  Velocidad: {rec.get('vel_x', 100):.0f} mm/s")
             lbl_p_mat.setText(f"Matriz Fixture: {rec.get('filas', 1)} × {rec.get('columnas', 1)} ({pz} Piezas/Jig)")
             lbl_p_dist.setText(f"Dist. C-C: X={rec.get('espacio_x', 0):.1f} mm | Y={rec.get('espacio_y', 0):.1f} mm")
+            lbl_p_prod.setText(f"Acumulado Receta: {tot_r} pz  (OK: {ok_r} | NOK: {nok_r} | Ciclos: {cic_r})")
             cx = float(rec.get("cero_x", 0.0))
             cy = float(rec.get("cero_y", 0.0))
             if rec.get("set_0_listo", True):
@@ -3658,11 +3830,16 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_proc_matriz_dim.setStyleSheet("font-size: 11px; font-weight: 700; color: #0284C7;")
         self.lbl_proc_matriz_dist = QLabel("Dist. C-C: X:20.0 | Y:35.0 mm")
         self.lbl_proc_matriz_dist.setStyleSheet("font-size: 10px; color: #475569;")
+        self.lbl_proc_receta_acum = QLabel("Acum. Receta: 0 pz (OK: 0 | NOK: 0 | Ciclos: 0)")
+        self.lbl_proc_receta_acum.setStyleSheet(
+            f"font-size: 10px; font-weight: 800; color: {COLOR_BRAND_PRIMARY};"
+        )
 
         info_left.addWidget(self.lbl_proc_pieza)
         info_left.addWidget(self.lbl_proc_modelo)
         info_left.addWidget(self.lbl_proc_matriz_dim)
         info_left.addWidget(self.lbl_proc_matriz_dist)
+        info_left.addWidget(self.lbl_proc_receta_acum)
         pgrid.addLayout(info_left, 1)
 
         self.lbl_proc_img_pieza = QLabel("[Sin imagen]")
@@ -4500,12 +4677,20 @@ class KostalHmiWindow(QMainWindow):
 
         self._refresh_all_operator_ui()
 
+    def _obtener_receta_activa_obj(self):
+        rec_nom = self.config.get("receta_activa", "")
+        return next((r for r in self.config.get("recetas", []) if r.get("nombre") == rec_nom), None)
+
     def _refresh_all_operator_ui(self):
         rec_nom = self.config.get("receta_activa", "")
         rec = next((r for r in self.config.get("recetas", []) if r.get("nombre") == rec_nom), {})
         pieza_txt = rec.get("pieza", "-")
         modelo_txt = rec.get("modelo", "-")
         img_txt = rec.get("imagen", "")
+        rec_tot = max(0, int(rec.get("piezas_producidas_total", 0) or 0))
+        rec_nok = max(0, min(rec_tot, int(rec.get("piezas_producidas_nok", 0) or 0)))
+        rec_ok = max(0, rec_tot - rec_nok)
+        rec_ciclos = max(0, int(rec.get("corridas", 0) or 0))
 
         self.lbl_proc_pieza.setText(f"{self._tr('pieza')} {pieza_txt}")
         self.lbl_proc_modelo.setText(f"{self._tr('modelo')} {modelo_txt}")
@@ -4515,6 +4700,15 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_proc_matriz_dist.setText(
             f"{self._tr('dist_cc')} X:{self.matriz_delta_x:.1f} mm | Y:{self.matriz_delta_y:.1f} mm"
         )
+        if hasattr(self, "lbl_proc_receta_acum"):
+            if self.idioma == "EN":
+                self.lbl_proc_receta_acum.setText(
+                    f"Recipe Total: {rec_tot} pcs (OK: {rec_ok} | NOK: {rec_nok} | Cycles: {rec_ciclos})"
+                )
+            else:
+                self.lbl_proc_receta_acum.setText(
+                    f"Acum. Receta: {rec_tot} pz (OK: {rec_ok} | NOK: {rec_nok} | Ciclos: {rec_ciclos})"
+                )
         self.lbl_piezas_realizadas_val.setText(
             f"{self.piezas_realizadas_lote:02d} / {self.piezas_por_jig_actual:02d}"
         )
@@ -4884,6 +5078,15 @@ class KostalHmiWindow(QMainWindow):
         self.config["produccion_total"] = self.produccion_total
         self.config["produccion_ok"] = self.produccion_ok
 
+        # Contabilizar también de forma independiente sobre la receta activa
+        rec_act = self._obtener_receta_activa_obj()
+        if rec_act is not None:
+            rec_tot = max(0, int(rec_act.get("piezas_producidas_total", 0) or 0)) + 1
+            rec_nok = max(0, min(rec_tot, int(rec_act.get("piezas_producidas_nok", 0) or 0)))
+            rec_act["piezas_producidas_total"] = rec_tot
+            rec_act["piezas_producidas_nok"] = rec_nok
+            rec_act["piezas_producidas_ok"] = max(0, rec_tot - rec_nok)
+
         log_debug_hmi(
             f"[CICLO-OK] Pieza #{pieza_completada_num:02d}/{self.piezas_por_jig_actual:02d} completada "
             f"(Lote={self.piezas_realizadas_lote}/{self.piezas_por_jig_actual}, Total={self.produccion_total})"
@@ -4898,6 +5101,9 @@ class KostalHmiWindow(QMainWindow):
             self.sim_cycle_timer.stop()
             self.opc_worker.enqueue_write("PINTAR", False)
             self.opc_worker.enqueue_write("PINTADO", False)
+            if rec_act is not None:
+                rec_act["corridas"] = max(0, int(rec_act.get("corridas", 0) or 0)) + 1
+            guardar_configuracion_disco(self.config, exportar_excel=False)
             DB_MANAGER.registrar_ciclo_produccion(
                 self.config,
                 self.usuario_actual,
@@ -4906,8 +5112,9 @@ class KostalHmiWindow(QMainWindow):
                 self.produccion_ok,
                 self.produccion_nok,
             )
-            guardar_configuracion_disco(self.config)
             self._refresh_all_operator_ui()
+            if hasattr(self, "tbl_stats_recetas"):
+                self._refresh_admin_stats_table()
             log_debug_hmi(
                 f"Fin de ciclo automático: +{self.piezas_por_jig_actual} piezas (Total={self.produccion_total}, OK={self.produccion_ok}, NOK={self.produccion_nok}). Retornando a Home."
             )
@@ -5210,11 +5417,19 @@ class KostalHmiWindow(QMainWindow):
 
     def ajustar_nok_manual(self, delta):
         """Permite integrar o ajustar manualmente las piezas NO OK descontándolas automáticamente de OK."""
+        prev_nok = self.produccion_nok
         nuevo_nok = max(0, min(self.produccion_total, self.produccion_nok + int(delta)))
+        diff = nuevo_nok - prev_nok
         self.produccion_nok = nuevo_nok
         self.produccion_ok = max(0, self.produccion_total - self.produccion_nok)
         self.config["produccion_nok"] = self.produccion_nok
         self.config["produccion_ok"] = self.produccion_ok
+        rec_act = self._obtener_receta_activa_obj()
+        if rec_act is not None and diff != 0:
+            rec_tot = max(0, int(rec_act.get("piezas_producidas_total", 0) or 0))
+            rec_nok = max(0, min(rec_tot, int(rec_act.get("piezas_producidas_nok", 0) or 0) + diff))
+            rec_act["piezas_producidas_nok"] = rec_nok
+            rec_act["piezas_producidas_ok"] = max(0, rec_tot - rec_nok)
         guardar_configuracion_disco(self.config)
         self._refresh_all_operator_ui()
 
@@ -5229,7 +5444,9 @@ class KostalHmiWindow(QMainWindow):
 
     def _guardar_corte_fin_de_hora(self, total_h, nok_h):
         total_auto = self.produccion_total
+        prev_nok = self.produccion_nok
         nok_manual = max(0, min(total_auto, int(nok_h)))
+        diff_nok = nok_manual - prev_nok
         ok_auto = max(0, total_auto - nok_manual)
         cal = round((ok_auto / total_auto * 100.0), 1) if total_auto > 0 else 100.0
         self.produccion_ok = ok_auto
@@ -5237,6 +5454,12 @@ class KostalHmiWindow(QMainWindow):
         self.config["produccion_total"] = self.produccion_total
         self.config["produccion_ok"] = self.produccion_ok
         self.config["produccion_nok"] = self.produccion_nok
+        rec_act = self._obtener_receta_activa_obj()
+        if rec_act is not None and diff_nok != 0:
+            rec_tot = max(0, int(rec_act.get("piezas_producidas_total", 0) or 0))
+            rec_nok = max(0, min(rec_tot, int(rec_act.get("piezas_producidas_nok", 0) or 0) + diff_nok))
+            rec_act["piezas_producidas_nok"] = rec_nok
+            rec_act["piezas_producidas_ok"] = max(0, rec_tot - rec_nok)
         hrs = self.sesion_segundos // 3600
         mins = (self.sesion_segundos % 3600) // 60
         secs = self.sesion_segundos % 60
@@ -5445,6 +5668,8 @@ class KostalHmiWindow(QMainWindow):
                 b.setStyleSheet(
                     "text-align: left; padding-left: 16px; background-color: #F1F5F9; color: #0F172A; font-size: 14px; font-weight: 800; border-radius: 9px;"
                 )
+        if idx == 1:
+            self._refresh_admin_stats_table()
 
     # ---------------- TAB 0: RECETARIO DE PRODUCCIÓN ----------------
     def _build_admin_tab_recipes(self):
@@ -5524,7 +5749,42 @@ class KostalHmiWindow(QMainWindow):
             widget.setMinimumHeight(42)
             form.addWidget(widget, r, c + 1)
 
+        self._adm_prev_matrix_cap = 15
+
+        def _sync_pz_on_dim_change(_txt=""):
+            try:
+                f_v = max(1, min(5, int(float(self.adm_rec_filas.text() or 0))))
+                c_v = max(1, min(5, int(float(self.adm_rec_cols.text() or 0))))
+            except ValueError:
+                return
+            if f_v <= 0 or c_v <= 0:
+                return
+            new_cap = f_v * c_v
+            try:
+                cur_pz = int(float(self.adm_rec_pz_jig.text() or 0))
+            except ValueError:
+                cur_pz = 0
+            if cur_pz <= 0 or cur_pz == self._adm_prev_matrix_cap or cur_pz > new_cap:
+                self.adm_rec_pz_jig.setText(str(new_cap))
+            self._adm_prev_matrix_cap = new_cap
+
+        self.adm_rec_filas.textEdited.connect(_sync_pz_on_dim_change)
+        self.adm_rec_cols.textEdited.connect(_sync_pz_on_dim_change)
+
         lay.addLayout(form)
+
+        rec_prod_box = QFrame()
+        rec_prod_box.setObjectName("SubSurface")
+        rplay = QHBoxLayout(rec_prod_box)
+        rplay.setContentsMargins(12, 8, 12, 8)
+        self.lbl_adm_rec_prod_summary = QLabel(
+            "Producción Acumulada de esta Receta:  Ciclos Completados: 0  |  Total: 0 pz  |  OK: 0 pz  |  NO OK: 0 pz"
+        )
+        self.lbl_adm_rec_prod_summary.setStyleSheet(
+            f"color: {COLOR_BRAND_PRIMARY}; font-size: 12px; font-weight: 800;"
+        )
+        rplay.addWidget(self.lbl_adm_rec_prod_summary)
+        lay.addWidget(rec_prod_box)
 
         img_row = QHBoxLayout()
         img_row.setSpacing(12)
@@ -5576,8 +5836,11 @@ class KostalHmiWindow(QMainWindow):
         self.adm_rec_nombre.setText(rec.get("nombre", ""))
         self.adm_rec_pieza.setText(rec.get("pieza", ""))
         self.adm_rec_modelo.setText(rec.get("modelo", ""))
-        self.adm_rec_filas.setText(str(rec.get("filas", 3)))
-        self.adm_rec_cols.setText(str(rec.get("columnas", 5)))
+        f_val = max(1, min(5, int(rec.get("filas", 3))))
+        c_val = max(1, min(5, int(rec.get("columnas", 5))))
+        self._adm_prev_matrix_cap = f_val * c_val
+        self.adm_rec_filas.setText(str(f_val))
+        self.adm_rec_cols.setText(str(c_val))
         self.adm_rec_pz_jig.setText(str(obtener_piezas_por_jig_receta(rec)))
         self.adm_rec_dx.setText(str(rec.get("espacio_x", 20.0)))
         self.adm_rec_dy.setText(str(rec.get("espacio_y", 35.0)))
@@ -5585,6 +5848,16 @@ class KostalHmiWindow(QMainWindow):
         self.adm_rec_cy.setText(str(rec.get("cero_y", 0.0)))
         self.adm_rec_vel.setText(str(rec.get("vel_x", 100.0)))
         self.adm_rec_img.setText(rec.get("imagen", "pieza_default.png"))
+        if hasattr(self, "lbl_adm_rec_prod_summary"):
+            tot_r = max(0, int(rec.get("piezas_producidas_total", 0) or 0))
+            nok_r = max(0, min(tot_r, int(rec.get("piezas_producidas_nok", 0) or 0)))
+            ok_r = max(0, tot_r - nok_r)
+            cic_r = max(0, int(rec.get("corridas", 0) or 0))
+            cal_r = round((ok_r / tot_r * 100.0), 1) if tot_r > 0 else 100.0
+            self.lbl_adm_rec_prod_summary.setText(
+                f"Producción Acumulada de esta Receta:  Ciclos Completados: {cic_r}  |  "
+                f"Total: {tot_r} pz  |  OK: {ok_r} pz  |  NO OK: {nok_r} pz  |  Calidad: {cal_r:.1f}%"
+            )
 
     def _admin_browse_image(self):
         fn, _ = QFileDialog.getOpenFileName(
@@ -5626,6 +5899,10 @@ class KostalHmiWindow(QMainWindow):
             "velocidad": 100.0,
             "vel_x": 100.0,
             "vel_y": 100.0,
+            "corridas": 0,
+            "piezas_producidas_total": 0,
+            "piezas_producidas_ok": 0,
+            "piezas_producidas_nok": 0,
             "imagen": "pieza_default.png",
         }
         recetas.append(nueva)
@@ -5725,6 +6002,12 @@ class KostalHmiWindow(QMainWindow):
             rec_orig.update(datos_receta)
             accion_msg = "creada"
         else:
+            datos_receta.update({
+                "corridas": 0,
+                "piezas_producidas_total": 0,
+                "piezas_producidas_ok": 0,
+                "piezas_producidas_nok": 0,
+            })
             recetas.append(datos_receta)
             accion_msg = "creada como nuevo programa"
 
@@ -5815,6 +6098,22 @@ class KostalHmiWindow(QMainWindow):
         db_lay.addWidget(lbl_xl_path)
         lay.addWidget(db_info_banner)
 
+        lbl_rec_stats = QLabel("Número de Piezas Producidas por Cada Receta")
+        lbl_rec_stats.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 13px; font-weight: 900;")
+        lay.addWidget(lbl_rec_stats)
+
+        self.tbl_stats_recetas = QTableWidget(0, 9)
+        self.tbl_stats_recetas.setHorizontalHeaderLabels([
+            "Receta / Jig", "Pieza", "Modelo", "Pz/Jig", "Ciclos", "Total Piezas", "OK", "NOK", "% Calidad"
+        ])
+        self.tbl_stats_recetas.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.tbl_stats_recetas.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        lay.addWidget(self.tbl_stats_recetas, 1)
+
+        lbl_hist_stats = QLabel("Historial de Cortes Horarios")
+        lbl_hist_stats.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 13px; font-weight: 900;")
+        lay.addWidget(lbl_hist_stats)
+
         self.tbl_stats = QTableWidget(0, 7)
         self.tbl_stats.setHorizontalHeaderLabels([
             "Fecha / Hora", "Operador", "Receta / Jig", "Total", "OK", "NOK", "% Calidad"
@@ -5838,6 +6137,32 @@ class KostalHmiWindow(QMainWindow):
             )
 
     def _refresh_admin_stats_table(self):
+        if hasattr(self, "tbl_stats_recetas"):
+            recetas = self.config.get("recetas", [])
+            self.tbl_stats_recetas.setRowCount(len(recetas))
+            for r_idx, r in enumerate(recetas):
+                pz_jig = obtener_piezas_por_jig_receta(r)
+                ciclos = max(0, int(r.get("corridas", 0) or 0))
+                tot = max(0, int(r.get("piezas_producidas_total", 0) or 0))
+                nok = max(0, min(tot, int(r.get("piezas_producidas_nok", 0) or 0)))
+                ok = max(0, tot - nok)
+                cal = f"{(ok / tot * 100.0):.1f}%" if tot > 0 else "100.0%"
+                vals_r = [
+                    r.get("nombre", "-"),
+                    r.get("pieza", "-"),
+                    r.get("modelo", "-"),
+                    str(pz_jig),
+                    str(ciclos),
+                    str(tot),
+                    str(ok),
+                    str(nok),
+                    cal,
+                ]
+                for c_idx, v in enumerate(vals_r):
+                    cell = QTableWidgetItem(v)
+                    cell.setTextAlignment(Qt.AlignCenter)
+                    self.tbl_stats_recetas.setItem(r_idx, c_idx, cell)
+
         hist = self.config.get("historial_horas", [])
         self.tbl_stats.setRowCount(len(hist))
         for r_idx, item in enumerate(reversed(hist)):
@@ -5864,22 +6189,28 @@ class KostalHmiWindow(QMainWindow):
             self.config["produccion_ok"] = 0
             self.config["produccion_nok"] = 0
             self.config["historial_horas"] = []
+            for r in self.config.get("recetas", []):
+                r["corridas"] = 0
+                r["piezas_producidas_total"] = 0
+                r["piezas_producidas_ok"] = 0
+                r["piezas_producidas_nok"] = 0
             DB_MANAGER.limpiar_historial_informes(self.config)
             guardar_configuracion_disco(self.config)
             self._refresh_admin_stats_table()
+            self._on_admin_recipe_selected(self.combo_admin_rec.currentText())
             self._refresh_all_operator_ui()
-            log_debug_hmi("Contadores e historial de producción reiniciados por administrador.")
+            log_debug_hmi("Contadores por receta, globales e historial de producción reiniciados por administrador.")
             self.overlay.show_message(
                 "Contadores Reiniciados",
-                "Se han puesto en cero los contadores de producción y el historial horario.",
+                "Se han puesto en cero los contadores globales, por receta y el historial horario.",
                 "ok",
             )
 
         self.overlay.show_message(
             "¿Reiniciar Contadores e Historial?",
             f"¿Está seguro de que desea poner en cero los contadores actuales "
-            f"(Total: {self.produccion_total}, OK: {self.produccion_ok}, NOK: {self.produccion_nok}) "
-            f"y limpiar la tabla de informes horarios?",
+            f"(Total: {self.produccion_total}, OK: {self.produccion_ok}, NOK: {self.produccion_nok}), "
+            f"los acumulados por receta y limpiar la tabla de informes horarios?",
             tipo="danger",
             on_confirm=_ejecutar_reinicio,
             confirm_text="Sí, Reiniciar Todo",
@@ -5903,7 +6234,7 @@ class KostalHmiWindow(QMainWindow):
         if ok:
             self.overlay.show_message(
                 "Exportación Exitosa",
-                f"Reporte multi-hoja (Informes Horarios, Ciclos Automáticos, Catálogo de Programas y KPIs) guardado en:\n{fn}\n\n"
+                f"Reporte multi-hoja (Informes Horarios, Resumen por Receta, Ciclos Automáticos, Catálogo de Programas y KPIs) guardado en:\n{fn}\n\n"
                 f"También actualizado automáticamente en:\n{EXCEL_MAESTRO_FILE}",
                 "ok",
             )
