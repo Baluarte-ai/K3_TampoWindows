@@ -490,6 +490,7 @@ class KostalDatabaseManager:
         self.db_dir = os.path.dirname(db_path)
         self.reportes_dir = reportes_dir
         self._lock = threading.RLock()
+        self.last_excel_error = ""
         os.makedirs(self.db_dir, exist_ok=True)
         os.makedirs(self.reportes_dir, exist_ok=True)
         self._init_schema()
@@ -1275,8 +1276,11 @@ class KostalDatabaseManager:
             )
 
             if not OPENPYXL_DISPONIBLE:
-                return True
+                self.last_excel_error = "La librería 'openpyxl' no está instalada en este entorno Python."
+                log_debug_hmi(f"[EXCEL-AVISO] {self.last_excel_error}")
+                return False
 
+            self.last_excel_error = ""
             # 2. Construir libro Excel multi-hoja con formato corporativo KOSTAL
             try:
                 wb = openpyxl.Workbook()
@@ -1482,25 +1486,58 @@ class KostalDatabaseManager:
                     [16, 21, 20, 15, 28, 22, 14, 18, 15, 16, 15, 17, 13, 18, 16],
                 )
 
-                # Guardar Reporte Maestro y Reporte Diario
-                wb.save(EXCEL_MAESTRO_FILE)
+                # Guardar cada libro de forma independiente para que si Excel tiene abierto
+                # Reporte_Maestro_KOSTAL.xlsx en pantalla no bloquee el Reporte Diario ni la copia manual.
+                os.makedirs(self.reportes_dir, exist_ok=True)
+                maestro_path = os.path.join(self.reportes_dir, "Reporte_Maestro_KOSTAL.xlsx")
                 fecha_hoy = datetime.datetime.now().strftime("%Y-%m-%d")
                 ruta_diaria = os.path.join(self.reportes_dir, f"Reporte_Diario_{fecha_hoy}.xlsx")
-                wb.save(ruta_diaria)
+
+                errores_guardado = []
+                extra_guardado_ok = False
+
+                for etiqueta, ruta_dest in (("Maestro", maestro_path), ("Diario", ruta_diaria)):
+                    try:
+                        wb.save(ruta_dest)
+                    except PermissionError:
+                        msg_lock = (
+                            f"El archivo '{os.path.basename(ruta_dest)}' está abierto en Excel u otro programa "
+                            f"(cierre el archivo para que pueda sobrescribirse)."
+                        )
+                        errores_guardado.append(msg_lock)
+                        log_debug_hmi(f"[EXCEL-BLOQUEO] {msg_lock}")
+                    except Exception as ex_save:
+                        msg_err = f"Error guardando {etiqueta} ({ruta_dest}): {ex_save}"
+                        errores_guardado.append(msg_err)
+                        log_debug_hmi(f"[EXCEL-ERROR] {msg_err}")
+
                 if ruta_destino_extra:
-                    wb.save(ruta_destino_extra)
-                return True
-            except PermissionError:
-                # Si el usuario tiene abierto el archivo Excel en pantalla, guardar copia instantánea sin bloquear
-                try:
-                    if ruta_destino_extra:
+                    try:
+                        extra_dir = os.path.dirname(os.path.abspath(ruta_destino_extra))
+                        if extra_dir:
+                            os.makedirs(extra_dir, exist_ok=True)
                         wb.save(ruta_destino_extra)
-                        return True
-                except Exception:
-                    pass
-                return False
+                        extra_guardado_ok = True
+                    except PermissionError:
+                        msg_lock_ex = (
+                            f"El archivo destino '{os.path.basename(ruta_destino_extra)}' está abierto en Excel "
+                            f"y no se puede sobrescribir."
+                        )
+                        errores_guardado.append(msg_lock_ex)
+                        log_debug_hmi(f"[EXCEL-BLOQUEO] {msg_lock_ex}")
+                    except Exception as ex_extra:
+                        msg_err_ex = f"Error guardando copia extra ({ruta_destino_extra}): {ex_extra}"
+                        errores_guardado.append(msg_err_ex)
+                        log_debug_hmi(f"[EXCEL-ERROR] {msg_err_ex}")
+
+                if errores_guardado:
+                    self.last_excel_error = " | ".join(errores_guardado)
+                if ruta_destino_extra:
+                    return extra_guardado_ok
+                return len(errores_guardado) < 2
             except Exception as e:
-                print(f"Aviso generando Excel automático: {e}")
+                self.last_excel_error = str(e)
+                log_debug_hmi(f"[EXCEL-ERROR] Error construyendo libro Excel: {e}")
                 return False
 
     @staticmethod
@@ -5015,6 +5052,16 @@ class KostalHmiWindow(QMainWindow):
             self.estado_pintando = False
             self.sim_cycle_timer.stop()
             self.opc_worker.enqueue_write("PINTAR", False)
+            guardar_configuracion_disco(self.config, exportar_excel=False)
+            DB_MANAGER.actualizar_kpi_tiempo_real(
+                self.config,
+                usuario_actual=getattr(self, "usuario_actual", {}),
+                piezas_realizadas_lote=self.piezas_realizadas_lote,
+                piezas_por_jig=self.piezas_por_jig_actual,
+                estado_operacion="PAUSADO",
+                plc_conectado=getattr(self, "plc_conectado", False),
+                exportar_archivos=True,
+            )
             log_debug_hmi(
                 f"Ciclo de pintado PAUSADO/DETENIDO por el operador en pieza #{self.indice_matriz_actual + 1:02d}/{self.piezas_por_jig_actual:02d}."
             )
@@ -6280,7 +6327,12 @@ class KostalHmiWindow(QMainWindow):
 
     def _export_stats_excel(self):
         if not OPENPYXL_DISPONIBLE:
-            self.overlay.show_message("Módulo Faltante", "openpyxl no está instalado en este entorno.", "warn")
+            self.overlay.show_message(
+                "Módulo Faltante (openpyxl)",
+                "La librería 'openpyxl' no está instalada en este entorno Python.\n\n"
+                "Ejecute [Instalar_Dependencias_Windows.bat] o 'pip install openpyxl' para habilitar la exportación a Excel.",
+                "warn",
+            )
             return
         os.makedirs(REPORTES_DIR, exist_ok=True)
         fn, _ = QFileDialog.getSaveFileName(
@@ -6291,16 +6343,23 @@ class KostalHmiWindow(QMainWindow):
         )
         if not fn:
             return
+        if not fn.lower().endswith(".xlsx"):
+            fn += ".xlsx"
         ok = DB_MANAGER.exportar_excel_y_csv_automatico(self.config, ruta_destino_extra=fn)
         if ok:
+            aviso_lock = (
+                f"\n\nAviso: {DB_MANAGER.last_excel_error}"
+                if getattr(DB_MANAGER, "last_excel_error", "")
+                else f"\n\nTambién actualizado automáticamente en:\n{EXCEL_MAESTRO_FILE}"
+            )
             self.overlay.show_message(
                 "Exportación Exitosa",
-                f"Reporte multi-hoja (Informes Horarios, Resumen por Receta, Ciclos Automáticos, Catálogo de Programas y KPIs) guardado en:\n{fn}\n\n"
-                f"También actualizado automáticamente en:\n{EXCEL_MAESTRO_FILE}",
+                f"Reporte multi-hoja (Informes Horarios, Resumen por Receta, Ciclos Automáticos, Catálogo de Programas y KPIs) guardado en:\n{fn}{aviso_lock}",
                 "ok",
             )
         else:
-            self.overlay.show_message("Error al Exportar", "No fue posible escribir el archivo Excel seleccionado.", "error")
+            det = getattr(DB_MANAGER, "last_excel_error", "") or "No fue posible escribir el archivo Excel seleccionado."
+            self.overlay.show_message("Error al Exportar", det, "error")
 
     # ---------------- TAB 2: CONTROL DE USUARIOS ----------------
     def _build_admin_tab_users(self):
