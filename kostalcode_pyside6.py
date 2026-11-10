@@ -4790,7 +4790,7 @@ class KostalHmiWindow(QMainWindow):
                 f"X: {self.matriz_delta_x:.1f} mm | Y: {self.matriz_delta_y:.1f} mm | Diag: {self.matriz_dist_diag:.1f} mm"
             )
             self.lbl_matriz_dist_badge.setStyleSheet(
-                f"background-color: #F1F5F9; color: {COLOR_TEXT_SECONDARY}; font-size: 11px; font-weight: 800; padding: 4px 10px; border: 1px solid #CBD5E1; border-radius: 6px;"
+                f"background-color: #F1F5F9; color: {COLOR_TEXT_SEC}; font-size: 11px; font-weight: 800; padding: 4px 10px; border: 1px solid #CBD5E1; border-radius: 6px;"
             )
         self.btn_patron_toggle.setText(
             self._tr("patron_vert") if self.patron_pintado == "vertical" else self._tr("patron_horiz")
@@ -5819,6 +5819,7 @@ class KostalHmiWindow(QMainWindow):
         return tab
 
     def _refresh_admin_recipes_list(self):
+        self._adm_creating_new_recipe = False
         self.combo_admin_rec.blockSignals(True)
         self.combo_admin_rec.clear()
         for r in self.config.get("recetas", []):
@@ -5830,9 +5831,18 @@ class KostalHmiWindow(QMainWindow):
         self._on_admin_recipe_selected(self.combo_admin_rec.currentText())
 
     def _on_admin_recipe_selected(self, nom):
+        if nom == "— NUEVA RECETA (Sin guardar) —":
+            return
         rec = next((r for r in self.config.get("recetas", []) if r.get("nombre") == nom), None)
         if not rec:
             return
+        self._adm_creating_new_recipe = False
+        idx_draft = self.combo_admin_rec.findText("— NUEVA RECETA (Sin guardar) —")
+        if idx_draft >= 0:
+            self.combo_admin_rec.blockSignals(True)
+            self.combo_admin_rec.removeItem(idx_draft)
+            self.combo_admin_rec.setCurrentText(nom)
+            self.combo_admin_rec.blockSignals(False)
         self.adm_rec_nombre.setText(rec.get("nombre", ""))
         self.adm_rec_pieza.setText(rec.get("pieza", ""))
         self.adm_rec_modelo.setText(rec.get("modelo", ""))
@@ -5871,49 +5881,45 @@ class KostalHmiWindow(QMainWindow):
         self.adm_rec_cy.setText(f"{limitar_coord_y(self.pos_actual_y):.2f}")
 
     def _admin_new_recipe(self):
-        recetas = self.config.setdefault("recetas", [])
+        recetas = self.config.get("recetas", [])
         n = len(recetas) + 1
         nombre_cand = f"#{n} - Nueva Receta KOSTAL"
         while any(r.get("nombre") == nombre_cand for r in recetas):
             n += 1
             nombre_cand = f"#{n} - Nueva Receta KOSTAL"
-        nueva = {
-            "nombre": nombre_cand,
-            "pieza": "Nueva Pieza",
-            "modelo": f"MOD-{n:02d}",
-            "filas": 3,
-            "cols": 5,
-            "columnas": 5,
-            "piezas": 15,
-            "piezas_por_jig": 15,
-            "delta_x": 20.0,
-            "espacio_x": 20.0,
-            "delta_y": 35.0,
-            "espacio_y": 35.0,
-            "cero_guardado_x": 0.0,
-            "cero_x": 0.0,
-            "cero_guardado_y": 0.0,
-            "cero_y": 0.0,
-            "cero_calibrado": True,
-            "set_0_listo": True,
-            "velocidad": 100.0,
-            "vel_x": 100.0,
-            "vel_y": 100.0,
-            "corridas": 0,
-            "piezas_producidas_total": 0,
-            "piezas_producidas_ok": 0,
-            "piezas_producidas_nok": 0,
-            "imagen": "pieza_default.png",
-        }
-        recetas.append(nueva)
-        self.config["receta_activa"] = nueva["nombre"]
-        guardar_configuracion_disco(self.config)
-        self._refresh_admin_recipes_list()
-        self.combo_admin_rec.setCurrentText(nueva["nombre"])
+
+        self._adm_creating_new_recipe = True
+        self.combo_admin_rec.blockSignals(True)
+        draft_lbl = "— NUEVA RECETA (Sin guardar) —"
+        if self.combo_admin_rec.findText(draft_lbl) < 0:
+            self.combo_admin_rec.addItem(draft_lbl)
+        self.combo_admin_rec.setCurrentText(draft_lbl)
+        self.combo_admin_rec.blockSignals(False)
+
+        self._adm_prev_matrix_cap = 15
+        self.adm_rec_nombre.setText(nombre_cand)
+        self.adm_rec_pieza.setText("Nueva Pieza")
+        self.adm_rec_modelo.setText(f"MOD-{n:02d}")
+        self.adm_rec_filas.setText("3")
+        self.adm_rec_cols.setText("5")
+        self.adm_rec_pz_jig.setText("15")
+        self.adm_rec_dx.setText("20.0")
+        self.adm_rec_dy.setText("35.0")
+        self.adm_rec_cx.setText("0.0")
+        self.adm_rec_cy.setText("0.0")
+        self.adm_rec_vel.setText("100.0")
+        self.adm_rec_img.setText("pieza_default.png")
+        if hasattr(self, "lbl_adm_rec_prod_summary"):
+            self.lbl_adm_rec_prod_summary.setText(
+                "Borrador de Nueva Receta: Complete los datos y presione [GUARDAR CAMBIOS EN RECETA Y ACTIVAR]."
+            )
         self.adm_rec_nombre.setFocus()
         self.adm_rec_nombre.selectAll()
 
     def _admin_delete_recipe(self):
+        if getattr(self, "_adm_creating_new_recipe", False):
+            self._refresh_admin_recipes_list()
+            return
         recetas = self.config.get("recetas", [])
         if len(recetas) <= 1:
             self.overlay.show_message("Acción No Permitida", "Debe existir al menos una receta en el sistema.", "warn")
@@ -5952,21 +5958,44 @@ class KostalHmiWindow(QMainWindow):
 
     def _admin_save_recipe(self):
         orig_name = self.combo_admin_rec.currentText()
+        es_borrador_nuevo = getattr(self, "_adm_creating_new_recipe", False) or (
+            orig_name == "— NUEVA RECETA (Sin guardar) —"
+        )
         recetas = self.config.setdefault("recetas", [])
+
+        nuevo_nom = self.adm_rec_nombre.text().strip()
+        if not nuevo_nom:
+            self.overlay.show_message(
+                "Nombre Requerido",
+                "Ingrese un Nombre de Receta / Jig antes de guardar.",
+                "warn",
+            )
+            return
+
+        def _num_text(widget, default_val):
+            txt = widget.text().strip().replace(",", ".")
+            return txt if txt else str(default_val)
+
         try:
-            f = max(1, min(5, int(float(self.adm_rec_filas.text() or 3))))
-            c = max(1, min(5, int(float(self.adm_rec_cols.text() or 5))))
-            pz = max(1, min(f * c, int(float(self.adm_rec_pz_jig.text() or (f * c)))))
-            dx = abs(float(self.adm_rec_dx.text() or 20.0))
-            dy = abs(float(self.adm_rec_dy.text() or 35.0))
-            cx = limitar_coord_x(self.adm_rec_cx.text())
-            cy = limitar_coord_y(self.adm_rec_cy.text())
-            vel = max(1.0, min(500.0, float(self.adm_rec_vel.text() or 100.0)))
+            f = max(1, min(5, int(float(_num_text(self.adm_rec_filas, 3)))))
+            c = max(1, min(5, int(float(_num_text(self.adm_rec_cols, 5)))))
+            pz_raw = int(float(_num_text(self.adm_rec_pz_jig, f * c)))
+            pz = max(1, min(f * c, pz_raw))
+            dx = abs(float(_num_text(self.adm_rec_dx, 20.0)))
+            dy = abs(float(_num_text(self.adm_rec_dy, 35.0)))
+            cx = limitar_coord_x(_num_text(self.adm_rec_cx, 0.0))
+            cy = limitar_coord_y(_num_text(self.adm_rec_cy, 0.0))
+            vel = max(1.0, min(500.0, float(_num_text(self.adm_rec_vel, 100.0))))
         except ValueError:
             self.overlay.show_message("Error de Formato", "Verifique que los campos numéricos sean válidos.", "error")
             return
 
-        nuevo_nom = self.adm_rec_nombre.text().strip() or orig_name or "#1 - Receta KOSTAL"
+        # Sincronizar visualmente el número de piezas por Jig si superó filas*columnas
+        self.adm_rec_filas.setText(str(f))
+        self.adm_rec_cols.setText(str(c))
+        self.adm_rec_pz_jig.setText(str(pz))
+        self._adm_prev_matrix_cap = f * c
+
         datos_receta = {
             "nombre": nuevo_nom,
             "pieza": self.adm_rec_pieza.text().strip() or "Pieza",
@@ -5993,14 +6022,38 @@ class KostalHmiWindow(QMainWindow):
         }
 
         rec_existente_nuevo = next((r for r in recetas if r.get("nombre") == nuevo_nom), None)
-        rec_orig = next((r for r in recetas if r.get("nombre") == orig_name), None)
+        rec_orig = None if es_borrador_nuevo else next((r for r in recetas if r.get("nombre") == orig_name), None)
 
-        if rec_existente_nuevo is not None:
+        if es_borrador_nuevo:
+            if rec_existente_nuevo is not None:
+                self.overlay.show_message(
+                    "Nombre Duplicado",
+                    f"Ya existe una receta llamada '{nuevo_nom}'.\n"
+                    f"Escriba un nombre distinto para crear una nueva receta, o selecciónela de la lista para editarla.",
+                    "warn",
+                )
+                return
+            datos_receta.update({
+                "corridas": 0,
+                "piezas_producidas_total": 0,
+                "piezas_producidas_ok": 0,
+                "piezas_producidas_nok": 0,
+            })
+            recetas.append(datos_receta)
+            accion_msg = "creada como nuevo programa"
+        elif rec_orig is not None:
+            if rec_existente_nuevo is not None and rec_existente_nuevo is not rec_orig:
+                self.overlay.show_message(
+                    "Nombre Duplicado",
+                    f"Ya existe otro programa llamado '{nuevo_nom}'. Elija un nombre único.",
+                    "warn",
+                )
+                return
+            rec_orig.update(datos_receta)
+            accion_msg = "creada" if "Nueva Receta KOSTAL" in orig_name else "actualizada"
+        elif rec_existente_nuevo is not None:
             rec_existente_nuevo.update(datos_receta)
             accion_msg = "actualizada"
-        elif rec_orig is not None and "Nueva Receta KOSTAL" in orig_name:
-            rec_orig.update(datos_receta)
-            accion_msg = "creada"
         else:
             datos_receta.update({
                 "corridas": 0,
@@ -6011,11 +6064,19 @@ class KostalHmiWindow(QMainWindow):
             recetas.append(datos_receta)
             accion_msg = "creada como nuevo programa"
 
+        self._adm_creating_new_recipe = False
         self.config["receta_activa"] = nuevo_nom
         guardar_configuracion_disco(self.config)
         self.cargar_receta_por_nombre(nuevo_nom, silencioso=True)
         self._refresh_admin_recipes_list()
+        self._refresh_admin_stats_table()
         self.combo_admin_rec.setCurrentText(nuevo_nom)
+
+        nota_pz = (
+            f"\n\nNota: Piezas Activas por Jig ajustado de {pz_raw} al máximo de la matriz ({f} × {c} = {pz})."
+            if pz_raw != pz
+            else ""
+        )
 
         recorrido_x = (c - 1) * dx
         recorrido_y = (f - 1) * dy
@@ -6028,13 +6089,13 @@ class KostalHmiWindow(QMainWindow):
                 f"(X={recorrido_x:.1f} mm / máx {COORD_X_MAX:.0f} mm, Y={recorrido_y:.1f} mm / máx {COORD_Y_MAX:.0f} mm) "
                 f"excede la carrera física del eje.\n\n"
                 f"Las últimas columnas/filas se truncarán al tope (88 mm / 200 mm) y aparentarán saltar cavidades.\n"
-                f"Para {c} columnas y {f} filas se recomienda Paso X <= {max_dx:.1f} mm y Paso Y <= {max_dy:.1f} mm.",
+                f"Para {c} columnas y {f} filas se recomienda Paso X <= {max_dx:.1f} mm y Paso Y <= {max_dy:.1f} mm.{nota_pz}",
                 "warn",
             )
         else:
             self.overlay.show_message(
                 "Programa Guardado en Base de Datos",
-                f"El programa '{nuevo_nom}' fue {accion_msg}, activado y respaldado en la Base de Datos Local y Excel Maestro.",
+                f"El programa '{nuevo_nom}' fue {accion_msg}, activado y respaldado en la Base de Datos Local y Excel Maestro.{nota_pz}",
                 "ok",
             )
 
