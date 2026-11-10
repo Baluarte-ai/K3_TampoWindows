@@ -3335,6 +3335,8 @@ class KostalHmiWindow(QMainWindow):
         self.matriz_coordenadas = []
         self.estados_piezas = []
         self.indice_matriz_actual = 0
+        self.posicion_manual_seleccionada = False
+        self._ciclo_desde_manual = False
         self.pasada_actual_pieza = 1
         self.movimientos_realizados_lote = 0
         self.piezas_realizadas_lote = 0
@@ -4713,6 +4715,8 @@ class KostalHmiWindow(QMainWindow):
         self.velocidad_actual = float(rec.get("vel_x", 100.0))
 
         self.indice_matriz_actual = 0
+        self.posicion_manual_seleccionada = False
+        self._ciclo_desde_manual = False
         self.pasada_actual_pieza = 1
         self.movimientos_realizados_lote = 0
         self.piezas_realizadas_lote = 0
@@ -4987,6 +4991,8 @@ class KostalHmiWindow(QMainWindow):
             dx, dy = self.matriz_coordenadas[idx_dest]
             if self.estado_manual:
                 self.lbl_tele_destino.setText(f"MANUAL P{idx_dest + 1:02d}: X={dx:.1f} Y={dy:.1f}")
+            elif self.posicion_manual_seleccionada and not self.estado_pintando:
+                self.lbl_tele_destino.setText(f"CONTINUAR P{idx_dest + 1:02d}: X={dx:.1f} Y={dy:.1f}")
             else:
                 self.lbl_tele_destino.setText(f"DESTINO P{idx_dest + 1:02d}: X={dx:.1f} Y={dy:.1f}")
 
@@ -5052,7 +5058,11 @@ class KostalHmiWindow(QMainWindow):
                 )
 
         # Actualizar Lienzo de 60 FPS
-        active_idx = self.indice_matriz_actual if (self.estado_pintando or self.estado_manual) else -1
+        active_idx = (
+            self.indice_matriz_actual
+            if (self.estado_pintando or self.estado_manual or self.posicion_manual_seleccionada)
+            else -1
+        )
         self.fixture_canvas.configure_matrix(
             filas=self.matriz_filas,
             cols=self.matriz_cols,
@@ -5165,9 +5175,20 @@ class KostalHmiWindow(QMainWindow):
                 )
                 return
 
-            # Sincronización estricta entre indice_matriz_actual y movimientos_realizados_lote:
-            # Evita que clics previos en el fixture o pruebas en modo manual salten posiciones
-            if (
+            total_cells = self.matriz_filas * self.matriz_cols
+            if self.posicion_manual_seleccionada:
+                # Continuar ciclo automático y conteo desde la cavidad elegida en Modo Manual
+                self.indice_matriz_actual = max(
+                    0, min(self.indice_matriz_actual, max(0, self.movimientos_por_jig_actual - 1))
+                )
+                if len(self.estados_piezas) != total_cells:
+                    self.estados_piezas = ["pendiente"] * total_cells
+                else:
+                    for i in range(self.indice_matriz_actual, total_cells):
+                        self.estados_piezas[i] = "pendiente"
+                self._ciclo_desde_manual = True
+                self.posicion_manual_seleccionada = False
+            elif (
                 self.movimientos_realizados_lote >= self.movimientos_por_jig_actual
                 or self.piezas_realizadas_lote >= self.piezas_por_jig_actual
                 or self.movimientos_realizados_lote <= 0
@@ -5175,15 +5196,16 @@ class KostalHmiWindow(QMainWindow):
                 self.indice_matriz_actual = 0
                 self.movimientos_realizados_lote = 0
                 self.piezas_realizadas_lote = 0
-                self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
+                self.estados_piezas = ["pendiente"] * total_cells
+                self._ciclo_desde_manual = False
             else:
                 # Reanudación de lote pausado a mitad del Jig: alinear índice con movimientos_realizados_lote
                 self.indice_matriz_actual = min(self.movimientos_realizados_lote, self.movimientos_por_jig_actual - 1)
-                total_cells = self.matriz_filas * self.matriz_cols
                 self.estados_piezas = [
                     "ok" if i < self.indice_matriz_actual else "pendiente"
                     for i in range(total_cells)
                 ]
+                self._ciclo_desde_manual = False
 
             self.estado_pintando = True
             self.pasada_actual_pieza = 1
@@ -5308,12 +5330,16 @@ class KostalHmiWindow(QMainWindow):
             f"(Lote={self.piezas_realizadas_lote}/{self.piezas_por_jig_actual}, Total={self.produccion_total})"
         )
 
-        # Verificar si se completó el Jig entero (tanto por movimientos ejecutados como por piezas)
-        if (
-            self.movimientos_realizados_lote >= self.movimientos_por_jig_actual
-            or (self.indice_matriz_actual + 1) >= self.movimientos_por_jig_actual
-            or self.piezas_realizadas_lote >= self.piezas_por_jig_actual
-        ):
+        # Verificar si se completó el Jig entero (si inició desde selección manual, concluye al terminar la última posición)
+        if getattr(self, "_ciclo_desde_manual", False):
+            fin_jig = (self.indice_matriz_actual + 1) >= self.movimientos_por_jig_actual
+        else:
+            fin_jig = (
+                self.movimientos_realizados_lote >= self.movimientos_por_jig_actual
+                or (self.indice_matriz_actual + 1) >= self.movimientos_por_jig_actual
+                or self.piezas_realizadas_lote >= self.piezas_por_jig_actual
+            )
+        if fin_jig:
             self.estado_pintando = False
             self.sim_cycle_timer.stop()
             self.opc_worker.enqueue_write("PINTAR", False)
@@ -5354,6 +5380,8 @@ class KostalHmiWindow(QMainWindow):
         if self.estado_pintando:
             return
         self.indice_matriz_actual = 0
+        self.posicion_manual_seleccionada = False
+        self._ciclo_desde_manual = False
         self.pasada_actual_pieza = 1
         self.movimientos_realizados_lote = 0
         self.piezas_realizadas_lote = 0
@@ -5382,6 +5410,8 @@ class KostalHmiWindow(QMainWindow):
         if not self._verificar_seguridad_antes_de_operar():
             return
         self.indice_matriz_actual = seq_idx
+        self.pasada_actual_pieza = 1
+        self.posicion_manual_seleccionada = True
         self._enviar_pieza_actual_al_plc()
         self._refresh_all_operator_ui()
 
@@ -5484,13 +5514,21 @@ class KostalHmiWindow(QMainWindow):
         self.estado_manual = not self.estado_manual
         self.estado_auto = not self.estado_manual
         if self.estado_auto:
-            # Al regresar de Modo MANUAL a Modo AUTO, reiniciar puntero de recorrido a la pieza #1
-            # para que cualquier prueba manual de cavidades no desfase el inicio del ciclo automático.
-            self.indice_matriz_actual = 0
             self.pasada_actual_pieza = 1
-            self.movimientos_realizados_lote = 0
-            self.piezas_realizadas_lote = 0
-            self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
+            if self.posicion_manual_seleccionada:
+                # Conservar la cavidad elegida en la matriz y el conteo acumulado para continuar pintado y conteo
+                self.indice_matriz_actual = max(
+                    0, min(self.indice_matriz_actual, max(0, self.movimientos_por_jig_actual - 1))
+                )
+            elif self.movimientos_realizados_lote <= 0:
+                self.indice_matriz_actual = 0
+                self.movimientos_realizados_lote = 0
+                self.piezas_realizadas_lote = 0
+                self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
+            else:
+                self.indice_matriz_actual = min(
+                    self.movimientos_realizados_lote, max(0, self.movimientos_por_jig_actual - 1)
+                )
         self.opc_worker.enqueue_write("MANUAL", self.estado_manual)
         self.opc_worker.enqueue_write("AUTO", self.estado_auto)
         self._refresh_all_operator_ui()
@@ -5669,6 +5707,8 @@ class KostalHmiWindow(QMainWindow):
             self.paro_requiere_inicio = True
 
         self.indice_matriz_actual = 0
+        self.posicion_manual_seleccionada = False
+        self._ciclo_desde_manual = False
         self.pasada_actual_pieza = 1
         self.movimientos_realizados_lote = 0
         self.piezas_realizadas_lote = 0
