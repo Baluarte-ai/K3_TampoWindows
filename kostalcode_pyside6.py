@@ -540,6 +540,9 @@ def _normalizar_produccion_por_empleado(cfg: dict) -> dict:
         tot = max(0, int(entry.get("total", 0) or 0))
         nok = max(0, min(tot, int(entry.get("nok", 0) or 0)))
         ok = max(0, tot - nok)
+        tot_h = max(0, int(entry.get("total_hora", tot) or 0))
+        nok_h = max(0, min(tot_h, int(entry.get("nok_hora", nok) or 0)))
+        ok_h = max(0, tot_h - nok_h)
         ciclos = max(0, int(entry.get("ciclos", 0) or 0))
         norm[uid] = {
             "num_empleado": uid,
@@ -549,6 +552,9 @@ def _normalizar_produccion_por_empleado(cfg: dict) -> dict:
             "total": tot,
             "ok": ok,
             "nok": nok,
+            "total_hora": tot_h,
+            "ok_hora": ok_h,
+            "nok_hora": nok_h,
             "actualizado_en": str(entry.get("actualizado_en") or ahora),
         }
 
@@ -565,6 +571,9 @@ def _normalizar_produccion_por_empleado(cfg: dict) -> dict:
                 "total": 0,
                 "ok": 0,
                 "nok": 0,
+                "total_hora": 0,
+                "ok_hora": 0,
+                "nok_hora": 0,
                 "actualizado_en": ahora,
             }
         else:
@@ -576,13 +585,19 @@ def _normalizar_produccion_por_empleado(cfg: dict) -> dict:
 
 
 def _obtener_reg_empleado(cfg: dict, usuario_dict: dict, crear: bool = True) -> dict:
-    """Obtiene el registro de producción (total, ok, nok) para el empleado dado."""
+    """Obtiene el registro de producción (acumulado y hora actual) para el empleado dado."""
     norm = cfg.get("produccion_por_empleado")
     if not isinstance(norm, dict):
         norm = _normalizar_produccion_por_empleado(cfg)
     uid = _obtener_clave_empleado(usuario_dict)
     if uid in norm:
         entry = norm[uid]
+        if "total_hora" not in entry:
+            tot_e = max(0, int(entry.get("total", 0) or 0))
+            nok_e = max(0, min(tot_e, int(entry.get("nok", 0) or 0)))
+            entry["total_hora"] = tot_e
+            entry["nok_hora"] = nok_e
+            entry["ok_hora"] = max(0, tot_e - nok_e)
         if isinstance(usuario_dict, dict):
             if usuario_dict.get("nombre"):
                 entry["nombre"] = str(usuario_dict["nombre"])
@@ -590,7 +605,18 @@ def _obtener_reg_empleado(cfg: dict, usuario_dict: dict, crear: bool = True) -> 
                 entry["rol"] = str(usuario_dict["rol"]).upper()
         return entry
     if not crear:
-        return {"num_empleado": uid, "nombre": str((usuario_dict or {}).get("nombre") or uid), "rol": str((usuario_dict or {}).get("rol") or "OPERADOR").upper(), "ciclos": 0, "total": 0, "ok": 0, "nok": 0}
+        return {
+            "num_empleado": uid,
+            "nombre": str((usuario_dict or {}).get("nombre") or uid),
+            "rol": str((usuario_dict or {}).get("rol") or "OPERADOR").upper(),
+            "ciclos": 0,
+            "total": 0,
+            "ok": 0,
+            "nok": 0,
+            "total_hora": 0,
+            "ok_hora": 0,
+            "nok_hora": 0,
+        }
     ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     entry = {
         "num_empleado": uid,
@@ -600,6 +626,9 @@ def _obtener_reg_empleado(cfg: dict, usuario_dict: dict, crear: bool = True) -> 
         "total": 0,
         "ok": 0,
         "nok": 0,
+        "total_hora": 0,
+        "ok_hora": 0,
+        "nok_hora": 0,
         "actualizado_en": ahora,
     }
     norm[uid] = entry
@@ -613,16 +642,34 @@ def _actualizar_produccion_empleado(
     delta_nok: int = 0,
     delta_ciclos: int = 0,
 ) -> dict:
-    """Actualiza acumuladores de total, ok, nok y ciclos para el empleado activo."""
+    """Actualiza acumuladores totales y de la hora actual para el empleado activo."""
     entry = _obtener_reg_empleado(cfg, usuario_dict, crear=True)
     tot = max(0, int(entry.get("total", 0) or 0) + int(delta_total))
     nok = max(0, min(tot, int(entry.get("nok", 0) or 0) + int(delta_nok)))
     ok = max(0, tot - nok)
+
+    tot_h = max(0, int(entry.get("total_hora", 0) or 0) + int(delta_total))
+    nok_h = max(0, min(tot_h, int(entry.get("nok_hora", 0) or 0) + int(delta_nok)))
+    ok_h = max(0, tot_h - nok_h)
+
     ciclos = max(0, int(entry.get("ciclos", 0) or 0) + int(delta_ciclos))
     entry["total"] = tot
     entry["nok"] = nok
     entry["ok"] = ok
+    entry["total_hora"] = tot_h
+    entry["nok_hora"] = nok_h
+    entry["ok_hora"] = ok_h
     entry["ciclos"] = ciclos
+    entry["actualizado_en"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return entry
+
+
+def _reiniciar_contadores_hora_empleado(cfg: dict, usuario_dict: dict) -> dict:
+    """Reinicia a 0 los valores de la hora en curso del empleado sin borrar su acumulado histórico."""
+    entry = _obtener_reg_empleado(cfg, usuario_dict, crear=True)
+    entry["total_hora"] = 0
+    entry["ok_hora"] = 0
+    entry["nok_hora"] = 0
     entry["actualizado_en"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return entry
 
@@ -773,6 +820,9 @@ class KostalDatabaseManager:
                             piezas_ok INTEGER NOT NULL DEFAULT 0,
                             piezas_nok INTEGER NOT NULL DEFAULT 0,
                             calidad_pct REAL NOT NULL DEFAULT 100.0,
+                            total_hora INTEGER NOT NULL DEFAULT 0,
+                            ok_hora INTEGER NOT NULL DEFAULT 0,
+                            nok_hora INTEGER NOT NULL DEFAULT 0,
                             ultima_actualizacion TEXT NOT NULL
                         );
                         """
@@ -794,6 +844,19 @@ class KostalDatabaseManager:
                         if col_nom not in cols_exist:
                             conn.execute(
                                 f"ALTER TABLE recetas_programas ADD COLUMN {col_nom} {col_ddl}"
+                            )
+                    cols_emp_exist = {
+                        r["name"]
+                        for r in conn.execute("PRAGMA table_info(produccion_por_empleado)").fetchall()
+                    }
+                    for col_nom, col_ddl in (
+                        ("total_hora", "INTEGER NOT NULL DEFAULT 0"),
+                        ("ok_hora", "INTEGER NOT NULL DEFAULT 0"),
+                        ("nok_hora", "INTEGER NOT NULL DEFAULT 0"),
+                    ):
+                        if col_nom not in cols_emp_exist:
+                            conn.execute(
+                                f"ALTER TABLE produccion_por_empleado ADD COLUMN {col_nom} {col_ddl}"
                             )
                     conn.commit()
             except Exception as e:
@@ -917,6 +980,10 @@ class KostalDatabaseManager:
                         nok_db = max(0, min(tot_db, int(row["piezas_nok"] or 0)))
                         ok_db = max(0, tot_db - nok_db)
                         cic_db = max(0, int(row["ciclos_completados"] or 0))
+                        row_keys_e = row.keys()
+                        tot_h_db = max(0, int(row["total_hora"] or 0)) if "total_hora" in row_keys_e else 0
+                        nok_h_db = max(0, min(tot_h_db, int(row["nok_hora"] or 0))) if "nok_hora" in row_keys_e else 0
+                        ok_h_db = max(0, tot_h_db - nok_h_db)
                         entry = prod_emp.get(uid)
                         if entry is None:
                             prod_emp[uid] = {
@@ -927,6 +994,9 @@ class KostalDatabaseManager:
                                 "total": tot_db,
                                 "ok": ok_db,
                                 "nok": nok_db,
+                                "total_hora": tot_h_db,
+                                "ok_hora": ok_h_db,
+                                "nok_hora": nok_h_db,
                                 "actualizado_en": str(row["ultima_actualizacion"] or ahora),
                             }
                         else:
@@ -1151,14 +1221,18 @@ class KostalDatabaseManager:
             tot = max(0, int(entry.get("total", 0) or 0))
             nok = max(0, min(tot, int(entry.get("nok", 0) or 0)))
             ok = max(0, tot - nok)
+            tot_h = max(0, int(entry.get("total_hora", 0) or 0))
+            nok_h = max(0, min(tot_h, int(entry.get("nok_hora", 0) or 0)))
+            ok_h = max(0, tot_h - nok_h)
             cic = max(0, int(entry.get("ciclos", 0) or 0))
             cal = round((ok / tot * 100.0), 1) if tot > 0 else 100.0
             conn.execute(
                 """
                 INSERT INTO produccion_por_empleado (
                     num_empleado, nombre, rol, ciclos_completados,
-                    total_piezas, piezas_ok, piezas_nok, calidad_pct, ultima_actualizacion
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    total_piezas, piezas_ok, piezas_nok, calidad_pct,
+                    total_hora, ok_hora, nok_hora, ultima_actualizacion
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(num_empleado) DO UPDATE SET
                     nombre=excluded.nombre,
                     rol=excluded.rol,
@@ -1167,6 +1241,9 @@ class KostalDatabaseManager:
                     piezas_ok=excluded.piezas_ok,
                     piezas_nok=excluded.piezas_nok,
                     calidad_pct=excluded.calidad_pct,
+                    total_hora=excluded.total_hora,
+                    ok_hora=excluded.ok_hora,
+                    nok_hora=excluded.nok_hora,
                     ultima_actualizacion=excluded.ultima_actualizacion
                 """,
                 (
@@ -1178,6 +1255,9 @@ class KostalDatabaseManager:
                     ok,
                     nok,
                     cal,
+                    tot_h,
+                    ok_h,
+                    nok_h,
                     str(entry.get("actualizado_en") or ahora),
                 ),
             )
@@ -1452,7 +1532,7 @@ class KostalDatabaseManager:
                     conn.execute("DELETE FROM informes_horarios")
                     conn.execute("DELETE FROM ciclos_produccion")
                     conn.execute(
-                        "UPDATE produccion_por_empleado SET ciclos_completados=0, total_piezas=0, piezas_ok=0, piezas_nok=0, calidad_pct=100.0"
+                        "UPDATE produccion_por_empleado SET ciclos_completados=0, total_piezas=0, piezas_ok=0, piezas_nok=0, total_hora=0, ok_hora=0, nok_hora=0, calidad_pct=100.0"
                     )
                     conn.commit()
             except Exception as e:
@@ -4165,6 +4245,23 @@ class KostalHmiWindow(QMainWindow):
         root.addWidget(body, 1)
         return page
 
+    @staticmethod
+    def _aplicar_estilo_combo_receta(combo: QComboBox, min_height: int = 48, min_width: int = None):
+        """Aplica tamaño táctil amplio y fuente legible a los desplegables de selección de receta."""
+        view = QListView()
+        view.setSpacing(2)
+        combo.setView(view)
+        combo.setMinimumHeight(min_height)
+        if min_width is not None:
+            combo.setMinimumWidth(min_width)
+        combo.setStyleSheet(
+            f"QComboBox {{ font-size: 14px; font-weight: 800; padding: 6px 12px; border: 1.5px solid {COLOR_BORDER}; border-radius: 7px; background-color: #FFFFFF; color: {COLOR_TEXT_PRI}; }}"
+            f"QComboBox:focus {{ border: 2px solid {COLOR_ACCENT_CYAN}; }}"
+            "QComboBox::drop-down { width: 38px; border-left: 1px solid #CBD5E1; background-color: #F1F5F9; border-top-right-radius: 7px; border-bottom-right-radius: 7px; }"
+            f"QComboBox QAbstractItemView {{ font-size: 14px; font-weight: 700; padding: 6px; background-color: #FFFFFF; color: {COLOR_TEXT_PRI}; selection-background-color: #E0F2FE; selection-color: #0369A1; }}"
+            "QComboBox QAbstractItemView::item { min-height: 44px; padding: 8px 12px; }"
+        )
+
     # ---------------- COLUMNA 1: INFORMACIÓN DE PROCESO Y PINTADO ----------------
     def _build_col1_process(self):
         col = QWidget()
@@ -4201,8 +4298,7 @@ class KostalHmiWindow(QMainWindow):
         cplay.addLayout(row_rec_hdr)
 
         self.combo_receta_op = QComboBox()
-        self.combo_receta_op.setView(QListView())
-        self.combo_receta_op.setMinimumHeight(32)
+        self._aplicar_estilo_combo_receta(self.combo_receta_op, min_height=48)
         self.combo_receta_op.activated.connect(self._on_operator_recipe_combo_activated)
         cplay.addWidget(self.combo_receta_op)
 
@@ -5193,15 +5289,15 @@ class KostalHmiWindow(QMainWindow):
 
         self.produccion_ok = max(0, self.produccion_total - self.produccion_nok)
         emp_rec = _obtener_reg_empleado(self.config, getattr(self, "usuario_actual", {}), crear=True)
-        emp_tot = int(emp_rec.get("total", 0) or 0)
-        emp_ok = int(emp_rec.get("ok", 0) or 0)
-        emp_nok = int(emp_rec.get("nok", 0) or 0)
+        emp_tot = int(emp_rec.get("total_hora", 0) or 0)
+        emp_ok = int(emp_rec.get("ok_hora", 0) or 0)
+        emp_nok = int(emp_rec.get("nok_hora", 0) or 0)
         if hasattr(self, "lbl_kpi_emp_scope"):
             emp_nom = emp_rec.get("nombre", "Operador")
             if self.idioma == "EN":
-                self.lbl_kpi_emp_scope.setText(f"EMPLOYEE COUNT ({emp_nom}):")
+                self.lbl_kpi_emp_scope.setText(f"HOURLY EMPLOYEE ({emp_nom}):")
             else:
-                self.lbl_kpi_emp_scope.setText(f"CONTEO EMPLEADO ({emp_nom}):")
+                self.lbl_kpi_emp_scope.setText(f"CONTEO HORA EMPLEADO ({emp_nom}):")
         self.lbl_kpi_tot_val.setText(str(emp_tot))
         self.lbl_kpi_ok_val.setText(str(emp_ok))
         if hasattr(self, "lbl_kpi_nok_val"):
@@ -6044,10 +6140,10 @@ class KostalHmiWindow(QMainWindow):
         self._refresh_all_operator_ui()
 
     def ajustar_nok_manual(self, delta):
-        """Permite integrar o ajustar manualmente las piezas NO OK del empleado descontándolas automáticamente de OK."""
+        """Permite integrar o ajustar manualmente las piezas NO OK de la hora del empleado descontándolas de OK."""
         emp_rec = _obtener_reg_empleado(self.config, self.usuario_actual, crear=True)
-        prev_emp_nok = int(emp_rec.get("nok", 0) or 0)
-        emp_tot = int(emp_rec.get("total", 0) or 0)
+        prev_emp_nok = int(emp_rec.get("nok_hora", 0) or 0)
+        emp_tot = int(emp_rec.get("total_hora", 0) or 0)
         nuevo_emp_nok = max(0, min(emp_tot, prev_emp_nok + int(delta)))
         diff = nuevo_emp_nok - prev_emp_nok
         if diff != 0:
@@ -6073,15 +6169,15 @@ class KostalHmiWindow(QMainWindow):
         emp_rec = _obtener_reg_empleado(self.config, self.usuario_actual, crear=True)
         self.overlay.show_hourly_log_modal(
             rec_nom,
-            int(emp_rec.get("total", 0) or 0),
-            int(emp_rec.get("nok", 0) or 0),
+            int(emp_rec.get("total_hora", 0) or 0),
+            int(emp_rec.get("nok_hora", 0) or 0),
             self._guardar_corte_fin_de_hora,
         )
 
     def _guardar_corte_fin_de_hora(self, total_h, nok_h):
         emp_rec = _obtener_reg_empleado(self.config, self.usuario_actual, crear=True)
-        total_emp = int(emp_rec.get("total", 0) or 0)
-        prev_emp_nok = int(emp_rec.get("nok", 0) or 0)
+        total_emp = int(emp_rec.get("total_hora", 0) or 0)
+        prev_emp_nok = int(emp_rec.get("nok_hora", 0) or 0)
         nok_manual = max(0, min(total_emp, int(nok_h)))
         diff_nok = nok_manual - prev_emp_nok
         ok_emp = max(0, total_emp - nok_manual)
@@ -6104,6 +6200,10 @@ class KostalHmiWindow(QMainWindow):
         mins = (self.sesion_segundos % 3600) // 60
         secs = self.sesion_segundos % 60
         t_sesion = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+
+        # Reiniciar los valores de la hora en curso a 0 manteniendo el histórico en BD y acumulados
+        _reiniciar_contadores_hora_empleado(self.config, self.usuario_actual)
+
         DB_MANAGER.registrar_informe_horario(
             self.config,
             self.usuario_actual,
@@ -6113,13 +6213,14 @@ class KostalHmiWindow(QMainWindow):
             calidad_pct=cal,
             tiempo_sesion=t_sesion,
         )
-        guardar_configuracion_disco(self.config)
+        guardar_configuracion_disco(self.config, exportar_excel=False)
         self._refresh_all_operator_ui()
         self._refresh_admin_stats_table()
         self.overlay.show_message(
             "Corte de Hora Guardado en BD y Excel",
-            f"Informe del empleado ({emp_rec.get('nombre', 'Operador')}) registrado:\n"
-            f"Total={total_emp} | OK={ok_emp} | NO OK Manual={nok_manual} ({cal:.1f}%).",
+            f"Informe de hora ({emp_rec.get('nombre', 'Operador')}) guardado:\n"
+            f"Total={total_emp} | OK={ok_emp} | NO OK Manual={nok_manual} ({cal:.1f}%).\n"
+            "Los contadores de la hora actual han vuelto a 0 para iniciar el nuevo corte.",
             "ok",
         )
 
@@ -6354,9 +6455,7 @@ class KostalHmiWindow(QMainWindow):
         top.addStretch(1)
 
         self.combo_admin_rec = QComboBox()
-        self.combo_admin_rec.setView(QListView())
-        self.combo_admin_rec.setMinimumWidth(280)
-        self.combo_admin_rec.setMinimumHeight(48)
+        self._aplicar_estilo_combo_receta(self.combo_admin_rec, min_height=54, min_width=360)
         self.combo_admin_rec.currentTextChanged.connect(self._on_admin_recipe_selected)
         top.addWidget(self.combo_admin_rec)
 
@@ -7021,6 +7120,9 @@ class KostalHmiWindow(QMainWindow):
                 e["total"] = 0
                 e["ok"] = 0
                 e["nok"] = 0
+                e["total_hora"] = 0
+                e["ok_hora"] = 0
+                e["nok_hora"] = 0
             DB_MANAGER.limpiar_historial_informes(self.config)
             guardar_configuracion_disco(self.config)
             self._refresh_admin_stats_table()
