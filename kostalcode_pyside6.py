@@ -281,6 +281,7 @@ CONFIG_DEFAULT = {
     "produccion_total": 0,
     "produccion_ok": 0,
     "produccion_nok": 0,
+    "produccion_por_empleado": {},
     "historial_horas": [],
     "recetas": [
         {
@@ -516,6 +517,116 @@ def _normalizar_lista_recetas(recetas):
     return recetas
 
 
+def _obtener_clave_empleado(usuario_dict) -> str:
+    """Devuelve la clave única canónica de empleado (número de empleado o usuario)."""
+    u = usuario_dict if isinstance(usuario_dict, dict) else {}
+    uid = str(u.get("num") or u.get("num_empleado") or u.get("user") or u.get("nombre") or "operador").strip()
+    return uid or "operador"
+
+
+def _normalizar_produccion_por_empleado(cfg: dict) -> dict:
+    """Normaliza el mapa config['produccion_por_empleado'] asegurando claves y totales consistentes."""
+    ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    raw = cfg.get("produccion_por_empleado")
+    mapa = dict(raw) if isinstance(raw, dict) else {}
+    norm = {}
+
+    for k, entry in mapa.items():
+        if not isinstance(entry, dict):
+            continue
+        uid = str(entry.get("num_empleado") or k or "").strip()
+        if not uid:
+            continue
+        tot = max(0, int(entry.get("total", 0) or 0))
+        nok = max(0, min(tot, int(entry.get("nok", 0) or 0)))
+        ok = max(0, tot - nok)
+        ciclos = max(0, int(entry.get("ciclos", 0) or 0))
+        norm[uid] = {
+            "num_empleado": uid,
+            "nombre": str(entry.get("nombre") or uid),
+            "rol": str(entry.get("rol") or "OPERADOR").upper(),
+            "ciclos": ciclos,
+            "total": tot,
+            "ok": ok,
+            "nok": nok,
+            "actualizado_en": str(entry.get("actualizado_en") or ahora),
+        }
+
+    for u in cfg.get("usuarios", []):
+        uid = _obtener_clave_empleado(u)
+        nom = str(u.get("nombre") or uid)
+        rol = str(u.get("rol") or "OPERADOR").upper()
+        if uid not in norm:
+            norm[uid] = {
+                "num_empleado": uid,
+                "nombre": nom,
+                "rol": rol,
+                "ciclos": 0,
+                "total": 0,
+                "ok": 0,
+                "nok": 0,
+                "actualizado_en": ahora,
+            }
+        else:
+            norm[uid]["nombre"] = nom
+            norm[uid]["rol"] = rol
+
+    cfg["produccion_por_empleado"] = norm
+    return norm
+
+
+def _obtener_reg_empleado(cfg: dict, usuario_dict: dict, crear: bool = True) -> dict:
+    """Obtiene el registro de producción (total, ok, nok) para el empleado dado."""
+    norm = cfg.get("produccion_por_empleado")
+    if not isinstance(norm, dict):
+        norm = _normalizar_produccion_por_empleado(cfg)
+    uid = _obtener_clave_empleado(usuario_dict)
+    if uid in norm:
+        entry = norm[uid]
+        if isinstance(usuario_dict, dict):
+            if usuario_dict.get("nombre"):
+                entry["nombre"] = str(usuario_dict["nombre"])
+            if usuario_dict.get("rol"):
+                entry["rol"] = str(usuario_dict["rol"]).upper()
+        return entry
+    if not crear:
+        return {"num_empleado": uid, "nombre": str((usuario_dict or {}).get("nombre") or uid), "rol": str((usuario_dict or {}).get("rol") or "OPERADOR").upper(), "ciclos": 0, "total": 0, "ok": 0, "nok": 0}
+    ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry = {
+        "num_empleado": uid,
+        "nombre": str((usuario_dict or {}).get("nombre") or uid),
+        "rol": str((usuario_dict or {}).get("rol") or "OPERADOR").upper(),
+        "ciclos": 0,
+        "total": 0,
+        "ok": 0,
+        "nok": 0,
+        "actualizado_en": ahora,
+    }
+    norm[uid] = entry
+    return entry
+
+
+def _actualizar_produccion_empleado(
+    cfg: dict,
+    usuario_dict: dict,
+    delta_total: int = 0,
+    delta_nok: int = 0,
+    delta_ciclos: int = 0,
+) -> dict:
+    """Actualiza acumuladores de total, ok, nok y ciclos para el empleado activo."""
+    entry = _obtener_reg_empleado(cfg, usuario_dict, crear=True)
+    tot = max(0, int(entry.get("total", 0) or 0) + int(delta_total))
+    nok = max(0, min(tot, int(entry.get("nok", 0) or 0) + int(delta_nok)))
+    ok = max(0, tot - nok)
+    ciclos = max(0, int(entry.get("ciclos", 0) or 0) + int(delta_ciclos))
+    entry["total"] = tot
+    entry["nok"] = nok
+    entry["ok"] = ok
+    entry["ciclos"] = ciclos
+    entry["actualizado_en"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return entry
+
+
 # ==============================================================================
 # GESTOR DE BASE DE DATOS LOCAL SQLITE + GENERACIÓN AUTOMÁTICA DE EXCEL / CSV
 # (Preparado para conexión directa con Base de Datos y Dashboard Corporativo)
@@ -652,6 +763,18 @@ class KostalDatabaseManager:
                             password TEXT NOT NULL,
                             actualizado_en TEXT NOT NULL
                         );
+
+                        CREATE TABLE IF NOT EXISTS produccion_por_empleado (
+                            num_empleado TEXT PRIMARY KEY,
+                            nombre TEXT NOT NULL DEFAULT '',
+                            rol TEXT NOT NULL DEFAULT 'OPERADOR',
+                            ciclos_completados INTEGER NOT NULL DEFAULT 0,
+                            total_piezas INTEGER NOT NULL DEFAULT 0,
+                            piezas_ok INTEGER NOT NULL DEFAULT 0,
+                            piezas_nok INTEGER NOT NULL DEFAULT 0,
+                            calidad_pct REAL NOT NULL DEFAULT 100.0,
+                            ultima_actualizacion TEXT NOT NULL
+                        );
                         """
                     )
                     # Migración no destructiva para bases de datos existentes
@@ -780,6 +903,41 @@ class KostalDatabaseManager:
                             mapa_usr[uid] = u_db
                     cfg["usuarios"] = usrs_json
                     self._upsert_usuarios_conn(conn, cfg["usuarios"], ahora)
+
+                    # 2b. Producción acumulada por empleado
+                    prod_emp = _normalizar_produccion_por_empleado(cfg)
+                    rows_emp = conn.execute(
+                        "SELECT * FROM produccion_por_empleado ORDER BY num_empleado ASC"
+                    ).fetchall()
+                    for row in rows_emp:
+                        uid = str(row["num_empleado"] or "").strip()
+                        if not uid:
+                            continue
+                        tot_db = max(0, int(row["total_piezas"] or 0))
+                        nok_db = max(0, min(tot_db, int(row["piezas_nok"] or 0)))
+                        ok_db = max(0, tot_db - nok_db)
+                        cic_db = max(0, int(row["ciclos_completados"] or 0))
+                        entry = prod_emp.get(uid)
+                        if entry is None:
+                            prod_emp[uid] = {
+                                "num_empleado": uid,
+                                "nombre": str(row["nombre"] or uid),
+                                "rol": str(row["rol"] or "OPERADOR").upper(),
+                                "ciclos": cic_db,
+                                "total": tot_db,
+                                "ok": ok_db,
+                                "nok": nok_db,
+                                "actualizado_en": str(row["ultima_actualizacion"] or ahora),
+                            }
+                        else:
+                            if tot_db > int(entry.get("total", 0) or 0):
+                                entry["total"] = tot_db
+                                entry["nok"] = nok_db
+                                entry["ok"] = ok_db
+                            if cic_db > int(entry.get("ciclos", 0) or 0):
+                                entry["ciclos"] = cic_db
+                    cfg["produccion_por_empleado"] = prod_emp
+                    self._upsert_empleados_conn(conn, cfg["produccion_por_empleado"], cfg["usuarios"], ahora)
 
                     # 3. Historial de informes horarios
                     rows_inf = conn.execute(
@@ -983,6 +1141,47 @@ class KostalDatabaseManager:
                 tuple(ids_vigentes),
             )
 
+    def _upsert_empleados_conn(self, conn, prod_emp_map, usuarios, ahora):
+        tmp_cfg = {
+            "produccion_por_empleado": dict(prod_emp_map or {}),
+            "usuarios": list(usuarios or []),
+        }
+        norm = _normalizar_produccion_por_empleado(tmp_cfg)
+        for uid, entry in norm.items():
+            tot = max(0, int(entry.get("total", 0) or 0))
+            nok = max(0, min(tot, int(entry.get("nok", 0) or 0)))
+            ok = max(0, tot - nok)
+            cic = max(0, int(entry.get("ciclos", 0) or 0))
+            cal = round((ok / tot * 100.0), 1) if tot > 0 else 100.0
+            conn.execute(
+                """
+                INSERT INTO produccion_por_empleado (
+                    num_empleado, nombre, rol, ciclos_completados,
+                    total_piezas, piezas_ok, piezas_nok, calidad_pct, ultima_actualizacion
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(num_empleado) DO UPDATE SET
+                    nombre=excluded.nombre,
+                    rol=excluded.rol,
+                    ciclos_completados=excluded.ciclos_completados,
+                    total_piezas=excluded.total_piezas,
+                    piezas_ok=excluded.piezas_ok,
+                    piezas_nok=excluded.piezas_nok,
+                    calidad_pct=excluded.calidad_pct,
+                    ultima_actualizacion=excluded.ultima_actualizacion
+                """,
+                (
+                    uid,
+                    str(entry.get("nombre", uid)),
+                    str(entry.get("rol", "OPERADOR")).upper(),
+                    cic,
+                    tot,
+                    ok,
+                    nok,
+                    cal,
+                    str(entry.get("actualizado_en") or ahora),
+                ),
+            )
+
     def sincronizar_configuracion(self, cfg: dict, exportar_excel: bool = True):
         """Guarda recetas, usuarios y KPIs actuales en SQLite y actualiza los archivos Excel/CSV."""
         with self._lock:
@@ -991,6 +1190,12 @@ class KostalDatabaseManager:
                 with self._connect() as conn:
                     self._upsert_recetas_conn(conn, cfg.get("recetas", []), ahora)
                     self._upsert_usuarios_conn(conn, cfg.get("usuarios", []), ahora)
+                    self._upsert_empleados_conn(
+                        conn,
+                        cfg.get("produccion_por_empleado", {}),
+                        cfg.get("usuarios", []),
+                        ahora,
+                    )
                     conn.commit()
             except Exception as e:
                 print(f"Error en sincronizar_configuracion SQLite: {e}")
@@ -1070,6 +1275,12 @@ class KostalDatabaseManager:
                             1 if plc_conectado else 0,
                         ),
                     )
+                    self._upsert_empleados_conn(
+                        conn,
+                        cfg.get("produccion_por_empleado", {}),
+                        cfg.get("usuarios", []),
+                        ahora,
+                    )
                     conn.commit()
             except Exception as e:
                 print(f"Error actualizando kpi_tiempo_real: {e}")
@@ -1133,6 +1344,12 @@ class KostalDatabaseManager:
                         ),
                     )
                     self._upsert_recetas_conn(conn, cfg.get("recetas", []), fh)
+                    self._upsert_empleados_conn(
+                        conn,
+                        cfg.get("produccion_por_empleado", {}),
+                        cfg.get("usuarios", []),
+                        fh,
+                    )
                     conn.commit()
             except Exception as e:
                 print(f"Error registrando ciclo en SQLite: {e}")
@@ -1234,6 +1451,9 @@ class KostalDatabaseManager:
                 with self._connect() as conn:
                     conn.execute("DELETE FROM informes_horarios")
                     conn.execute("DELETE FROM ciclos_produccion")
+                    conn.execute(
+                        "UPDATE produccion_por_empleado SET ciclos_completados=0, total_piezas=0, piezas_ok=0, piezas_nok=0, calidad_pct=100.0"
+                    )
                     conn.commit()
             except Exception as e:
                 print(f"Error limpiando historial en SQLite: {e}")
@@ -1273,6 +1493,12 @@ class KostalDatabaseManager:
                             "SELECT * FROM produccion_por_receta ORDER BY total_piezas DESC, receta ASC"
                         ).fetchall()
                     ]
+                    resumen_empleados = [
+                        dict(r)
+                        for r in conn.execute(
+                            "SELECT * FROM produccion_por_empleado ORDER BY total_piezas DESC, nombre ASC"
+                        ).fetchall()
+                    ]
                     kpis = [
                         dict(r)
                         for r in conn.execute(
@@ -1301,6 +1527,15 @@ class KostalDatabaseManager:
                     "ultima_actualizacion",
                 ],
                 resumen_recetas,
+            )
+            self._write_csv_mirror(
+                os.path.join(self.db_dir, "produccion_por_empleado.csv"),
+                [
+                    "num_empleado", "nombre", "rol", "ciclos_completados",
+                    "total_piezas", "piezas_ok", "piezas_nok", "calidad_pct",
+                    "ultima_actualizacion",
+                ],
+                resumen_empleados,
             )
             self._write_csv_mirror(
                 os.path.join(self.db_dir, "ciclos_produccion.csv"),
@@ -1435,6 +1670,34 @@ class KostalDatabaseManager:
                     headers_res_rec,
                     rows_res_rec,
                     [30, 24, 14, 15, 18, 22, 13, 15, 13, 21],
+                )
+
+                # Hoja 2b: Resumen_Por_Empleado (Totales, OK y NO OK por empleado)
+                ws_res_emp = wb.create_sheet(title="Resumen_Por_Empleado")
+                headers_res_emp = [
+                    "No. Empleado", "Nombre / Empleado", "Rol", "Ciclos Completados",
+                    "Total Piezas", "Piezas OK", "Piezas NO OK", "% Calidad",
+                    "Última Actualización",
+                ]
+                rows_res_emp = [
+                    [
+                        r.get("num_empleado", ""),
+                        r.get("nombre", ""),
+                        r.get("rol", ""),
+                        int(r.get("ciclos_completados", 0)),
+                        int(r.get("total_piezas", 0)),
+                        int(r.get("piezas_ok", 0)),
+                        int(r.get("piezas_nok", 0)),
+                        f"{float(r.get('calidad_pct', 100.0)):.1f}%",
+                        r.get("ultima_actualizacion", ""),
+                    ]
+                    for r in resumen_empleados
+                ]
+                _style_worksheet(
+                    ws_res_emp,
+                    headers_res_emp,
+                    rows_res_emp,
+                    [16, 26, 16, 18, 15, 13, 15, 13, 21],
                 )
 
                 # Hoja 3: Ciclos_Automaticos
@@ -4014,7 +4277,11 @@ class KostalHmiWindow(QMainWindow):
         sess_row.addWidget(self.lbl_tiempo_sesion_val)
         cplay.addLayout(sess_row)
 
-        # Cajas KPI: TOTAL (Automático), OK (Automático) y NO OK (Manual)
+        # Cajas KPI por empleado: TOTAL (Automático), OK (Automático) y NO OK (Manual)
+        self.lbl_kpi_emp_scope = QLabel("CONTEO POR EMPLEADO:")
+        self.lbl_kpi_emp_scope.setStyleSheet("font-size: 9px; font-weight: 900; color: #334155;")
+        cplay.addWidget(self.lbl_kpi_emp_scope)
+
         kpi_row = QHBoxLayout()
         kpi_row.setSpacing(6)
 
@@ -4083,6 +4350,20 @@ class KostalHmiWindow(QMainWindow):
         kpi_row.addWidget(kpi_nok_box, 1)
 
         cplay.addLayout(kpi_row)
+
+        # Registro General de Piezas (exclusivo para rol ADMINISTRADOR)
+        self.admin_general_box = QFrame()
+        self.admin_general_box.setObjectName("SubSurface")
+        aglay = QVBoxLayout(self.admin_general_box)
+        aglay.setContentsMargins(8, 5, 8, 5)
+        aglay.setSpacing(2)
+        self.lbl_admin_gen_tit = QLabel("REGISTRO GENERAL ESTACIÓN (SOLO ADMIN):")
+        self.lbl_admin_gen_tit.setStyleSheet(f"font-size: 9px; font-weight: 900; color: {COLOR_BRAND_PRIMARY};")
+        self.lbl_admin_gen_val = QLabel("Total: 0  |  OK: 0  |  NO OK: 0")
+        self.lbl_admin_gen_val.setStyleSheet("font-family: Consolas; font-size: 11px; font-weight: 900; color: #0F172A;")
+        aglay.addWidget(self.lbl_admin_gen_tit)
+        aglay.addWidget(self.lbl_admin_gen_val)
+        cplay.addWidget(self.admin_general_box)
 
         self.btn_reg_fin_hora = QPushButton("Registrar Fin de Hora")
         self.btn_reg_fin_hora.setMinimumHeight(34)
@@ -4911,10 +5192,28 @@ class KostalHmiWindow(QMainWindow):
             )
 
         self.produccion_ok = max(0, self.produccion_total - self.produccion_nok)
-        self.lbl_kpi_tot_val.setText(str(self.produccion_total))
-        self.lbl_kpi_ok_val.setText(str(self.produccion_ok))
+        emp_rec = _obtener_reg_empleado(self.config, getattr(self, "usuario_actual", {}), crear=True)
+        emp_tot = int(emp_rec.get("total", 0) or 0)
+        emp_ok = int(emp_rec.get("ok", 0) or 0)
+        emp_nok = int(emp_rec.get("nok", 0) or 0)
+        if hasattr(self, "lbl_kpi_emp_scope"):
+            emp_nom = emp_rec.get("nombre", "Operador")
+            if self.idioma == "EN":
+                self.lbl_kpi_emp_scope.setText(f"EMPLOYEE COUNT ({emp_nom}):")
+            else:
+                self.lbl_kpi_emp_scope.setText(f"CONTEO EMPLEADO ({emp_nom}):")
+        self.lbl_kpi_tot_val.setText(str(emp_tot))
+        self.lbl_kpi_ok_val.setText(str(emp_ok))
         if hasattr(self, "lbl_kpi_nok_val"):
-            self.lbl_kpi_nok_val.setText(str(self.produccion_nok))
+            self.lbl_kpi_nok_val.setText(str(emp_nok))
+        es_admin_ui = self._es_usuario_admin()
+        if hasattr(self, "admin_general_box"):
+            self.admin_general_box.setVisible(es_admin_ui)
+            self.lbl_admin_gen_val.setText(
+                f"Total: {self.produccion_total}  |  OK: {self.produccion_ok}  |  NO OK: {self.produccion_nok}"
+            )
+        if hasattr(self, "lbl_proc_receta_acum"):
+            self.lbl_proc_receta_acum.setVisible(es_admin_ui)
         if hasattr(self, "opc_worker"):
             self.opc_worker.update_production_counters(
                 self.produccion_total, self.produccion_ok, self.produccion_nok
@@ -5168,12 +5467,20 @@ class KostalHmiWindow(QMainWindow):
                 )
                 return
             if self.estado_manual:
-                self.overlay.show_message(
-                    "Modo Manual Activo",
-                    "Cambie a MODO AUTO antes de iniciar el ciclo automático de pintado.",
-                    "warn",
-                )
-                return
+                if self.posicion_manual_seleccionada:
+                    # El operador eligió en Modo Manual la cavidad desde la cual continuar:
+                    # cambiar automáticamente a MODO AUTO en HMI/PLC y arrancar desde ahí.
+                    self.estado_manual = False
+                    self.estado_auto = True
+                    self.opc_worker.enqueue_write("MANUAL", False)
+                    self.opc_worker.enqueue_write("AUTO", True)
+                else:
+                    self.overlay.show_message(
+                        "Modo Manual Activo",
+                        "Seleccione una cavidad en la matriz para continuar desde ahí o cambie a MODO AUTO.",
+                        "warn",
+                    )
+                    return
 
             total_cells = self.matriz_filas * self.matriz_cols
             if self.posicion_manual_seleccionada:
@@ -5316,7 +5623,8 @@ class KostalHmiWindow(QMainWindow):
         self.config["produccion_total"] = self.produccion_total
         self.config["produccion_ok"] = self.produccion_ok
 
-        # Contabilizar también de forma independiente sobre la receta activa
+        # Contabilizar también de forma independiente sobre la receta activa y por empleado
+        _actualizar_produccion_empleado(self.config, self.usuario_actual, delta_total=pz_este_mov)
         rec_act = self._obtener_receta_activa_obj()
         if rec_act is not None:
             rec_tot = max(0, int(rec_act.get("piezas_producidas_total", 0) or 0)) + pz_este_mov
@@ -5344,6 +5652,7 @@ class KostalHmiWindow(QMainWindow):
             self.sim_cycle_timer.stop()
             self.opc_worker.enqueue_write("PINTAR", False)
             self.opc_worker.enqueue_write("PINTADO", False)
+            _actualizar_produccion_empleado(self.config, self.usuario_actual, delta_ciclos=1)
             if rec_act is not None:
                 rec_act["corridas"] = max(0, int(rec_act.get("corridas", 0) or 0)) + 1
             guardar_configuracion_disco(self.config, exportar_excel=False)
@@ -5735,11 +6044,16 @@ class KostalHmiWindow(QMainWindow):
         self._refresh_all_operator_ui()
 
     def ajustar_nok_manual(self, delta):
-        """Permite integrar o ajustar manualmente las piezas NO OK descontándolas automáticamente de OK."""
-        prev_nok = self.produccion_nok
-        nuevo_nok = max(0, min(self.produccion_total, self.produccion_nok + int(delta)))
-        diff = nuevo_nok - prev_nok
-        self.produccion_nok = nuevo_nok
+        """Permite integrar o ajustar manualmente las piezas NO OK del empleado descontándolas automáticamente de OK."""
+        emp_rec = _obtener_reg_empleado(self.config, self.usuario_actual, crear=True)
+        prev_emp_nok = int(emp_rec.get("nok", 0) or 0)
+        emp_tot = int(emp_rec.get("total", 0) or 0)
+        nuevo_emp_nok = max(0, min(emp_tot, prev_emp_nok + int(delta)))
+        diff = nuevo_emp_nok - prev_emp_nok
+        if diff != 0:
+            _actualizar_produccion_empleado(self.config, self.usuario_actual, delta_nok=diff)
+
+        self.produccion_nok = max(0, min(self.produccion_total, self.produccion_nok + diff))
         self.produccion_ok = max(0, self.produccion_total - self.produccion_nok)
         self.config["produccion_nok"] = self.produccion_nok
         self.config["produccion_ok"] = self.produccion_ok
@@ -5751,25 +6065,32 @@ class KostalHmiWindow(QMainWindow):
             rec_act["piezas_producidas_ok"] = max(0, rec_tot - rec_nok)
         guardar_configuracion_disco(self.config)
         self._refresh_all_operator_ui()
+        if hasattr(self, "tbl_stats_recetas"):
+            self._refresh_admin_stats_table()
 
     def abrir_dialogo_fin_de_hora(self):
         rec_nom = self.config.get("receta_activa", "")
+        emp_rec = _obtener_reg_empleado(self.config, self.usuario_actual, crear=True)
         self.overlay.show_hourly_log_modal(
             rec_nom,
-            self.produccion_total,
-            self.produccion_nok,
+            int(emp_rec.get("total", 0) or 0),
+            int(emp_rec.get("nok", 0) or 0),
             self._guardar_corte_fin_de_hora,
         )
 
     def _guardar_corte_fin_de_hora(self, total_h, nok_h):
-        total_auto = self.produccion_total
-        prev_nok = self.produccion_nok
-        nok_manual = max(0, min(total_auto, int(nok_h)))
-        diff_nok = nok_manual - prev_nok
-        ok_auto = max(0, total_auto - nok_manual)
-        cal = round((ok_auto / total_auto * 100.0), 1) if total_auto > 0 else 100.0
-        self.produccion_ok = ok_auto
-        self.produccion_nok = nok_manual
+        emp_rec = _obtener_reg_empleado(self.config, self.usuario_actual, crear=True)
+        total_emp = int(emp_rec.get("total", 0) or 0)
+        prev_emp_nok = int(emp_rec.get("nok", 0) or 0)
+        nok_manual = max(0, min(total_emp, int(nok_h)))
+        diff_nok = nok_manual - prev_emp_nok
+        ok_emp = max(0, total_emp - nok_manual)
+        cal = round((ok_emp / total_emp * 100.0), 1) if total_emp > 0 else 100.0
+        if diff_nok != 0:
+            _actualizar_produccion_empleado(self.config, self.usuario_actual, delta_nok=diff_nok)
+
+        self.produccion_nok = max(0, min(self.produccion_total, self.produccion_nok + diff_nok))
+        self.produccion_ok = max(0, self.produccion_total - self.produccion_nok)
         self.config["produccion_total"] = self.produccion_total
         self.config["produccion_ok"] = self.produccion_ok
         self.config["produccion_nok"] = self.produccion_nok
@@ -5786,8 +6107,8 @@ class KostalHmiWindow(QMainWindow):
         DB_MANAGER.registrar_informe_horario(
             self.config,
             self.usuario_actual,
-            total_piezas=total_auto,
-            piezas_ok=ok_auto,
+            total_piezas=total_emp,
+            piezas_ok=ok_emp,
             piezas_nok=nok_manual,
             calidad_pct=cal,
             tiempo_sesion=t_sesion,
@@ -5797,8 +6118,8 @@ class KostalHmiWindow(QMainWindow):
         self._refresh_admin_stats_table()
         self.overlay.show_message(
             "Corte de Hora Guardado en BD y Excel",
-            f"Informe registrado en la Base de Datos Local y en el Excel Maestro:\n"
-            f"Total Automático={total_auto} | OK={ok_auto} | NO OK Manual={nok_manual} ({cal:.1f}%).",
+            f"Informe del empleado ({emp_rec.get('nombre', 'Operador')}) registrado:\n"
+            f"Total={total_emp} | OK={ok_emp} | NO OK Manual={nok_manual} ({cal:.1f}%).",
             "ok",
         )
 
@@ -5854,8 +6175,14 @@ class KostalHmiWindow(QMainWindow):
             self.btn_set_0.setEnabled(es_admin)
         if hasattr(self, "btn_set_home"):
             self.btn_set_home.setEnabled(es_admin)
+        if hasattr(self, "lbl_proc_receta_acum"):
+            self.lbl_proc_receta_acum.setVisible(es_admin)
+        if hasattr(self, "admin_general_box"):
+            self.admin_general_box.setVisible(es_admin)
         if hasattr(self, "_update_col3_layout_scaling"):
             self._update_col3_layout_scaling()
+        if hasattr(self, "lbl_kpi_tot_val"):
+            self._refresh_all_operator_ui()
 
     def alternar_pantalla_completa(self):
         if self.isFullScreen():
@@ -6534,7 +6861,16 @@ class KostalHmiWindow(QMainWindow):
         db_lay.addWidget(lbl_xl_path)
         lay.addWidget(db_info_banner)
 
-        lbl_rec_stats = QLabel("Número de Piezas Producidas por Cada Receta")
+        self.lbl_stats_general_resumen = QLabel(
+            "REGISTRO GENERAL DE PIEZAS (SOLO ADMIN):  Total: 0  |  OK: 0  |  NO OK: 0  |  Calidad: 100.0%"
+        )
+        self.lbl_stats_general_resumen.setStyleSheet(
+            f"background-color: #EFF6FF; color: {COLOR_BRAND_PRIMARY}; border: 1px solid #BFDBFE; "
+            "border-radius: 6px; padding: 8px 12px; font-family: Consolas; font-size: 12px; font-weight: 900;"
+        )
+        lay.addWidget(self.lbl_stats_general_resumen)
+
+        lbl_rec_stats = QLabel("Registro General de Piezas Producidas por Cada Receta")
         lbl_rec_stats.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 13px; font-weight: 900;")
         lay.addWidget(lbl_rec_stats)
 
@@ -6545,6 +6881,18 @@ class KostalHmiWindow(QMainWindow):
         self.tbl_stats_recetas.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tbl_stats_recetas.setEditTriggers(QAbstractItemView.NoEditTriggers)
         lay.addWidget(self.tbl_stats_recetas, 1)
+
+        lbl_emp_stats = QLabel("Registro de Totales, OK y NO OK por Empleado")
+        lbl_emp_stats.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 13px; font-weight: 900;")
+        lay.addWidget(lbl_emp_stats)
+
+        self.tbl_stats_empleados = QTableWidget(0, 8)
+        self.tbl_stats_empleados.setHorizontalHeaderLabels([
+            "No. Empleado", "Empleado", "Rol", "Ciclos", "Total Piezas", "OK", "NO OK", "% Calidad"
+        ])
+        self.tbl_stats_empleados.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.tbl_stats_empleados.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        lay.addWidget(self.tbl_stats_empleados, 1)
 
         lbl_hist_stats = QLabel("Historial de Cortes Horarios")
         lbl_hist_stats.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 13px; font-weight: 900;")
@@ -6573,6 +6921,14 @@ class KostalHmiWindow(QMainWindow):
             )
 
     def _refresh_admin_stats_table(self):
+        if hasattr(self, "lbl_stats_general_resumen"):
+            ok_g = max(0, self.produccion_total - self.produccion_nok)
+            cal_g = f"{(ok_g / self.produccion_total * 100.0):.1f}%" if self.produccion_total > 0 else "100.0%"
+            self.lbl_stats_general_resumen.setText(
+                f"REGISTRO GENERAL DE PIEZAS (SOLO ADMIN):  "
+                f"Total: {self.produccion_total}  |  OK: {ok_g}  |  NO OK: {self.produccion_nok}  |  Calidad: {cal_g}"
+            )
+
         if hasattr(self, "tbl_stats_recetas"):
             recetas = self.config.get("recetas", [])
             self.tbl_stats_recetas.setRowCount(len(recetas))
@@ -6601,6 +6957,33 @@ class KostalHmiWindow(QMainWindow):
                     cell = QTableWidgetItem(v)
                     cell.setTextAlignment(Qt.AlignCenter)
                     self.tbl_stats_recetas.setItem(r_idx, c_idx, cell)
+
+        if hasattr(self, "tbl_stats_empleados"):
+            prod_emp = _normalizar_produccion_por_empleado(self.config)
+            emps_ord = sorted(
+                prod_emp.values(),
+                key=lambda x: (-int(x.get("total", 0) or 0), str(x.get("nombre", "")).lower()),
+            )
+            self.tbl_stats_empleados.setRowCount(len(emps_ord))
+            for r_idx, e in enumerate(emps_ord):
+                tot_e = max(0, int(e.get("total", 0) or 0))
+                nok_e = max(0, min(tot_e, int(e.get("nok", 0) or 0)))
+                ok_e = max(0, tot_e - nok_e)
+                cal_e = f"{(ok_e / tot_e * 100.0):.1f}%" if tot_e > 0 else "100.0%"
+                vals_e = [
+                    str(e.get("num_empleado", "-")),
+                    str(e.get("nombre", "-")),
+                    str(e.get("rol", "OPERADOR")),
+                    str(int(e.get("ciclos", 0) or 0)),
+                    str(tot_e),
+                    str(ok_e),
+                    str(nok_e),
+                    cal_e,
+                ]
+                for c_idx, v in enumerate(vals_e):
+                    cell = QTableWidgetItem(v)
+                    cell.setTextAlignment(Qt.AlignCenter)
+                    self.tbl_stats_empleados.setItem(r_idx, c_idx, cell)
 
         hist = self.config.get("historial_horas", [])
         self.tbl_stats.setRowCount(len(hist))
@@ -6633,6 +7016,11 @@ class KostalHmiWindow(QMainWindow):
                 r["piezas_producidas_total"] = 0
                 r["piezas_producidas_ok"] = 0
                 r["piezas_producidas_nok"] = 0
+            for e in _normalizar_produccion_por_empleado(self.config).values():
+                e["ciclos"] = 0
+                e["total"] = 0
+                e["ok"] = 0
+                e["nok"] = 0
             DB_MANAGER.limpiar_historial_informes(self.config)
             guardar_configuracion_disco(self.config)
             self._refresh_admin_stats_table()
