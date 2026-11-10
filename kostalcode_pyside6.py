@@ -2365,6 +2365,7 @@ class FixtureCanvasWidget(QWidget):
         self.coordenadas = []       # [(x, y), ...] según orden de recorrido
         self.estados = []           # ["pendiente" | "activa" | "ok" | "nok"]
         self.indice_activo = -1
+        self.manual_mode = False
         self.pasada_actual = 1
         self.total_pasadas = 1
         self.imagen_pieza_path = ""
@@ -2385,7 +2386,7 @@ class FixtureCanvasWidget(QWidget):
     def configure_matrix(
         self, filas, cols, piezas_por_jig, patron, coordenadas, estados,
         indice_activo, mostrar_coords=True, imagen_pieza="", pasada_actual=1, total_pasadas=1,
-        movimientos_por_jig=None, piezas_por_cabezal=1
+        movimientos_por_jig=None, piezas_por_cabezal=1, manual_mode=False
     ):
         self.filas = max(1, min(5, int(filas)))
         self.cols = max(1, min(5, int(cols)))
@@ -2400,6 +2401,7 @@ class FixtureCanvasWidget(QWidget):
         self.coordenadas = list(coordenadas)
         self.estados = list(estados)
         self.indice_activo = indice_activo
+        self.manual_mode = bool(manual_mode)
         self.mostrar_coords = bool(mostrar_coords)
         if imagen_pieza != self.imagen_pieza_path:
             self.imagen_pieza_path = imagen_pieza
@@ -2539,10 +2541,16 @@ class FixtureCanvasWidget(QWidget):
                     continue
 
                 estado = self.estados[seq_idx] if seq_idx < len(self.estados) else "pendiente"
+                es_sel_manual = self.manual_mode and (seq_idx == self.indice_activo)
                 es_activa = (seq_idx == self.indice_activo) or (estado == "activa")
                 es_hover = (seq_idx == self._hover_idx)
 
-                if estado == "ok":
+                if es_sel_manual:
+                    bg_col = QColor("#E0F2FE")
+                    border_col = QColor("#0284C7")
+                    badge_col = QColor("#0284C7")
+                    status_txt = "MANUAL"
+                elif estado == "ok":
                     bg_col = QColor("#ECFDF5")
                     border_col = QColor("#10B981")
                     badge_col = QColor("#059669")
@@ -4310,6 +4318,7 @@ class KostalHmiWindow(QMainWindow):
         jlay.addLayout(jhdr)
 
         self.jog_collapsible = AnimatedCollapsibleBox(self.card_jog, expanded=True)
+        self.jog_collapsible.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         c_lay = self.jog_collapsible.content_layout
 
         # Botón MODO AUTO / MANUAL + Velocidad
@@ -4330,15 +4339,16 @@ class KostalHmiWindow(QMainWindow):
         self.inp_velocidad.editingFinished.connect(self._on_velocidad_edited)
         mode_vel_row.addWidget(self.inp_velocidad)
 
-        lbl_mms = QLabel("mm/s")
-        lbl_mms.setStyleSheet("font-size: 10px; color: #475569; font-weight: 700;")
-        mode_vel_row.addWidget(lbl_mms)
+        self.lbl_mms_jog = QLabel("mm/s")
+        self.lbl_mms_jog.setStyleSheet("font-size: 10px; color: #475569; font-weight: 700;")
+        mode_vel_row.addWidget(self.lbl_mms_jog)
         c_lay.addLayout(mode_vel_row)
 
         # Sub-caja JOG Manual + Paso JOG + Presets
-        jog_sub = QFrame()
-        jog_sub.setObjectName("SubSurface")
-        jslay = QVBoxLayout(jog_sub)
+        self.jog_sub = QFrame()
+        self.jog_sub.setObjectName("SubSurface")
+        self.jog_sub.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        jslay = QVBoxLayout(self.jog_sub)
         jslay.setContentsMargins(8, 6, 8, 6)
         jslay.setSpacing(5)
 
@@ -4379,15 +4389,17 @@ class KostalHmiWindow(QMainWindow):
 
         jslay.addLayout(paso_row)
 
-        # Coordenadas + Cruceta Direccional (D-Pad)
-        dpad_row = QHBoxLayout()
-        dpad_row.setSpacing(8)
+        # Coordenadas + Cruceta Direccional (D-Pad) escalable
+        self.dpad_row = QHBoxLayout()
+        self.dpad_row.setSpacing(8)
 
-        coord_box = QFrame()
-        coord_box.setObjectName("DarkControlBox")
-        cblay = QVBoxLayout(coord_box)
+        self.coord_box = QFrame()
+        self.coord_box.setObjectName("DarkControlBox")
+        self.coord_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        cblay = QVBoxLayout(self.coord_box)
         cblay.setContentsMargins(8, 6, 8, 6)
         cblay.setSpacing(4)
+        cblay.addStretch(1)
 
         lbl_c_hdr = QLabel("COORD (X:0-88 | Y:0-200)")
         lbl_c_hdr.setStyleSheet("color: #94A3B8; font-size: 9px; font-weight: 800;")
@@ -4414,18 +4426,28 @@ class KostalHmiWindow(QMainWindow):
         ry.addWidget(lbl_y)
         ry.addWidget(self.inp_coord_y)
         cblay.addLayout(ry)
+        cblay.addStretch(1)
 
-        dpad_row.addWidget(coord_box, 1)
+        self.dpad_row.addWidget(self.coord_box, 1)
 
-        # Cruceta D-Pad
-        dpad_grid = QGridLayout()
-        dpad_grid.setSpacing(3)
+        # Cruceta D-Pad dentro de contenedor escalable
+        self.dpad_container = QWidget()
+        self.dpad_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.dpad_grid = QGridLayout(self.dpad_container)
+        self.dpad_grid.setContentsMargins(0, 0, 0, 0)
+        self.dpad_grid.setSpacing(3)
+        for idx_rc in range(3):
+            self.dpad_grid.setRowStretch(idx_rc, 1)
+            self.dpad_grid.setColumnStretch(idx_rc, 1)
+
         self.btn_jog_up = QPushButton("▲")
         self.btn_jog_down = QPushButton("▼")
         self.btn_jog_left = QPushButton("◄")
         self.btn_jog_right = QPushButton("►")
         for b in (self.btn_jog_up, self.btn_jog_down, self.btn_jog_left, self.btn_jog_right):
-            b.setFixedSize(36, 32)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            b.setMinimumSize(36, 32)
+            b.setMaximumSize(46, 40)
             b.setStyleSheet(
                 f"QPushButton {{ background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 13px; font-weight: 900; border-radius: 6px; }}"
                 "QPushButton:disabled { background-color: #CBD5E1; color: #64748B; }"
@@ -4435,14 +4457,14 @@ class KostalHmiWindow(QMainWindow):
         self.btn_jog_left.clicked.connect(lambda: self.mover_cruzeta("X", -1))
         self.btn_jog_right.clicked.connect(lambda: self.mover_cruzeta("X", 1))
 
-        dpad_grid.addWidget(self.btn_jog_up, 0, 1)
-        dpad_grid.addWidget(self.btn_jog_left, 1, 0)
-        dpad_grid.addWidget(self.btn_jog_right, 1, 2)
-        dpad_grid.addWidget(self.btn_jog_down, 2, 1)
-        dpad_row.addLayout(dpad_grid)
+        self.dpad_grid.addWidget(self.btn_jog_up, 0, 1)
+        self.dpad_grid.addWidget(self.btn_jog_left, 1, 0)
+        self.dpad_grid.addWidget(self.btn_jog_right, 1, 2)
+        self.dpad_grid.addWidget(self.btn_jog_down, 2, 1)
+        self.dpad_row.addWidget(self.dpad_container, 1)
 
-        jslay.addLayout(dpad_row)
-        c_lay.addWidget(jog_sub)
+        jslay.addLayout(self.dpad_row, 1)
+        c_lay.addWidget(self.jog_sub, 1)
 
         # Botones Home y Activar Tampo Manual
         hm_row = QHBoxLayout()
@@ -4495,9 +4517,9 @@ class KostalHmiWindow(QMainWindow):
         c_lay.addWidget(self.cal_collapsible)
 
         # Caja de Cero Registrado
-        cero_box = QFrame()
-        cero_box.setObjectName("SubSurface")
-        zlay = QHBoxLayout(cero_box)
+        self.jog_cero_box = QFrame()
+        self.jog_cero_box.setObjectName("SubSurface")
+        zlay = QHBoxLayout(self.jog_cero_box)
         zlay.setContentsMargins(8, 4, 8, 4)
         self.lbl_cero_reg_tit = QLabel("CERO REGISTRADO:")
         self.lbl_cero_reg_tit.setStyleSheet("font-size: 10px; font-weight: 800; color: #475569;")
@@ -4506,23 +4528,38 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_cero_reg_val = QLabel("X: 0.00 | Y: 0.00")
         self.lbl_cero_reg_val.setStyleSheet("font-family: Consolas; font-size: 11px; font-weight: 900; color: #0F172A;")
         zlay.addWidget(self.lbl_cero_reg_val)
-        c_lay.addWidget(cero_box)
+        c_lay.addWidget(self.jog_cero_box)
 
-        jlay.addWidget(self.jog_collapsible)
+        jlay.addWidget(self.jog_collapsible, 1)
         self.col3_layout.addWidget(self.card_jog, 0)
 
-        # Card Inferior: MANDOS DE CONTROL (INICIO, RESET, PARO)
+        # Card Inferior: MANDOS DE CONTROL (PLEGABLE: INICIO, RESET, PARO)
         self.card_mandos = QFrame()
         self.card_mandos.setObjectName("IndustrialCard")
         mlay = QVBoxLayout(self.card_mandos)
         mlay.setContentsMargins(12, 10, 12, 10)
         mlay.setSpacing(6)
 
+        mhdr = QHBoxLayout()
         self.lbl_title_mandos = QLabel("MANDOS DE CONTROL")
         self.lbl_title_mandos.setStyleSheet(
             f"color: {COLOR_BRAND_PRIMARY}; font-size: 12px; font-weight: 900;"
         )
-        mlay.addWidget(self.lbl_title_mandos)
+        mhdr.addWidget(self.lbl_title_mandos)
+        mhdr.addStretch(1)
+
+        self.btn_fold_mandos = QPushButton("▲ Plegar")
+        self.btn_fold_mandos.setFixedHeight(24)
+        self.btn_fold_mandos.setStyleSheet(
+            "background-color: #E2E8F0; color: #1E293B; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
+        )
+        self.btn_fold_mandos.clicked.connect(self.alternar_panel_mandos)
+        mhdr.addWidget(self.btn_fold_mandos)
+        mlay.addLayout(mhdr)
+
+        self.mandos_collapsible = AnimatedCollapsibleBox(self.card_mandos, expanded=True)
+        self.mandos_collapsible.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        mc_lay = self.mandos_collapsible.content_layout
 
         ir_row = QHBoxLayout()
         ir_row.setSpacing(8)
@@ -4543,7 +4580,7 @@ class KostalHmiWindow(QMainWindow):
         )
         self.btn_reset.clicked.connect(self.ejecutar_reset_general)
         ir_row.addWidget(self.btn_reset)
-        mlay.addLayout(ir_row, 1)
+        mc_lay.addLayout(ir_row, 1)
 
         self.btn_paro = QPushButton("PARO")
         self.btn_paro.setMinimumHeight(54)
@@ -4552,9 +4589,16 @@ class KostalHmiWindow(QMainWindow):
             f"background-color: {COLOR_ERR}; color: white; font-size: 16px; font-weight: 900; border-radius: 8px;"
         )
         self.btn_paro.clicked.connect(self.alternar_stop)
-        mlay.addWidget(self.btn_paro, 1)
+        mc_lay.addWidget(self.btn_paro, 1)
 
+        mlay.addWidget(self.mandos_collapsible, 1)
+
+        self.jog_collapsible._anim.finished.connect(self._update_col3_layout_scaling)
+        self.mandos_collapsible._anim.finished.connect(self._update_col3_layout_scaling)
+
+        self.col3_layout.addWidget(self.card_jog, 0)
         self.col3_layout.addWidget(self.card_mandos, 1)
+        self.col3_layout.addStretch(0)
         return col
 
 
@@ -4795,6 +4839,10 @@ class KostalHmiWindow(QMainWindow):
         self.btn_set_home.setText(self._tr("set_home"))
         self.lbl_cero_reg_tit.setText(self._tr("cero_reg"))
         self.lbl_title_mandos.setText(self._tr("mandos_ctrl"))
+        if hasattr(self, "btn_fold_mandos"):
+            self.btn_fold_mandos.setText(
+                self._tr("plegar") if self.mandos_collapsible.is_expanded else self._tr("desplegar")
+            )
         self.btn_inicio.setText(self._tr("inicio"))
         self.btn_reset.setText(self._tr("reset"))
 
@@ -4937,7 +4985,10 @@ class KostalHmiWindow(QMainWindow):
         idx_dest = min(self.indice_matriz_actual, max(0, len(self.matriz_coordenadas) - 1))
         if self.matriz_coordenadas:
             dx, dy = self.matriz_coordenadas[idx_dest]
-            self.lbl_tele_destino.setText(f"DESTINO P{idx_dest + 1:02d}: X={dx:.1f} Y={dy:.1f}")
+            if self.estado_manual:
+                self.lbl_tele_destino.setText(f"MANUAL P{idx_dest + 1:02d}: X={dx:.1f} Y={dy:.1f}")
+            else:
+                self.lbl_tele_destino.setText(f"DESTINO P{idx_dest + 1:02d}: X={dx:.1f} Y={dy:.1f}")
 
         # Modo AUTO / MANUAL y Cruceta
         if self.estado_manual:
@@ -5001,7 +5052,7 @@ class KostalHmiWindow(QMainWindow):
                 )
 
         # Actualizar Lienzo de 60 FPS
-        active_idx = self.indice_matriz_actual if self.estado_pintando else -1
+        active_idx = self.indice_matriz_actual if (self.estado_pintando or self.estado_manual) else -1
         self.fixture_canvas.configure_matrix(
             filas=self.matriz_filas,
             cols=self.matriz_cols,
@@ -5016,6 +5067,7 @@ class KostalHmiWindow(QMainWindow):
             total_pasadas=self.pasadas_tampo,
             movimientos_por_jig=self.movimientos_por_jig_actual,
             piezas_por_cabezal=self.piezas_por_cabezal_actual,
+            manual_mode=self.estado_manual,
         )
 
 
@@ -5348,6 +5400,63 @@ class KostalHmiWindow(QMainWindow):
         self.jog_collapsible.toggle()
         expanded = self.jog_collapsible.is_expanded
         self.btn_fold_jog.setText(self._tr("plegar") if expanded else self._tr("desplegar"))
+        self._update_col3_layout_scaling()
+
+    def alternar_panel_mandos(self):
+        self.mandos_collapsible.toggle()
+        expanded = self.mandos_collapsible.is_expanded
+        self.btn_fold_mandos.setText(self._tr("plegar") if expanded else self._tr("desplegar"))
+        self._update_col3_layout_scaling()
+
+    def _update_col3_layout_scaling(self):
+        if not hasattr(self, "col3_layout") or not hasattr(self, "jog_collapsible") or not hasattr(self, "mandos_collapsible"):
+            return
+        es_admin = self._es_usuario_admin()
+        jog_exp = self.jog_collapsible.is_expanded
+        mandos_exp = self.mandos_collapsible.is_expanded
+
+        scale_jog = es_admin and jog_exp and (not mandos_exp)
+
+        # Indices en col3_layout: 0=card_jog, 1=card_mandos, 2=stretch final
+        self.col3_layout.setStretch(0, 1 if scale_jog else 0)
+        self.col3_layout.setStretch(1, 1 if mandos_exp else 0)
+        self.col3_layout.setStretch(2, 1 if (not mandos_exp and not scale_jog) else 0)
+
+        if hasattr(self, "dpad_row"):
+            self.dpad_row.setStretch(0, 1)
+            self.dpad_row.setStretch(1, 2 if scale_jog else 1)
+        if hasattr(self, "dpad_grid"):
+            self.dpad_grid.setSpacing(6 if scale_jog else 3)
+
+        for b in (
+            getattr(self, "btn_jog_up", None),
+            getattr(self, "btn_jog_down", None),
+            getattr(self, "btn_jog_left", None),
+            getattr(self, "btn_jog_right", None),
+        ):
+            if b is None:
+                continue
+            if scale_jog:
+                b.setMinimumSize(58, 50)
+                b.setMaximumSize(130, 100)
+                b.setStyleSheet(
+                    f"QPushButton {{ background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 22px; font-weight: 900; border-radius: 8px; }}"
+                    "QPushButton:disabled { background-color: #CBD5E1; color: #64748B; }"
+                )
+            else:
+                b.setMinimumSize(36, 32)
+                b.setMaximumSize(46, 40)
+                b.setStyleSheet(
+                    f"QPushButton {{ background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 13px; font-weight: 900; border-radius: 6px; }}"
+                    "QPushButton:disabled { background-color: #CBD5E1; color: #64748B; }"
+                )
+
+        coord_h = 38 if scale_jog else 26
+        coord_font = "font-size: 15px; font-weight: 800;" if scale_jog else ""
+        for inp in (getattr(self, "inp_coord_x", None), getattr(self, "inp_coord_y", None)):
+            if inp is not None:
+                inp.setFixedHeight(coord_h)
+                inp.setStyleSheet(coord_font)
 
     def _es_usuario_admin(self):
         return self.usuario_actual.get("rol", "OPERADOR").upper() in ("ADMIN", "ADMINISTRADOR")
@@ -5674,18 +5783,39 @@ class KostalHmiWindow(QMainWindow):
         es_admin = rol in ("ADMIN", "ADMINISTRADOR")
         self.btn_header_admin.setVisible(es_admin)
         self.btn_recetario_admin_shortcut.setVisible(es_admin)
-        if hasattr(self, "btn_toggle_cal"):
-            self.btn_toggle_cal.setVisible(es_admin)
+        # En OPERACIÓN & JOG, el rol OPERADOR solo visualiza el botón MODO AUTO / MODO MANUAL
+        for attr in (
+            "lbl_vel_tit",
+            "inp_velocidad",
+            "lbl_mms_jog",
+            "jog_sub",
+            "btn_home",
+            "btn_tampo_manual",
+            "btn_toggle_cal",
+            "jog_cero_box",
+        ):
+            w = getattr(self, attr, None)
+            if w is not None:
+                w.setVisible(es_admin)
+        if hasattr(self, "jog_collapsible"):
+            if not es_admin and not self.jog_collapsible.is_expanded:
+                self.jog_collapsible.toggle(True)
+                if hasattr(self, "btn_fold_jog"):
+                    self.btn_fold_jog.setText(self._tr("plegar"))
+        if hasattr(self, "btn_modo"):
+            self.btn_modo.setMinimumHeight(34 if es_admin else 42)
         if hasattr(self, "cal_collapsible"):
             if not es_admin and self.cal_collapsible.is_expanded:
-                self.cal_collapsible.toggle()
+                self.cal_collapsible.toggle(False)
                 if hasattr(self, "btn_toggle_cal"):
                     self.btn_toggle_cal.setText(self._tr("calibracion_show"))
-            self.cal_collapsible.setVisible(es_admin)
+            self.cal_collapsible.setVisible(es_admin and self.cal_collapsible.is_expanded)
         if hasattr(self, "btn_set_0"):
             self.btn_set_0.setEnabled(es_admin)
         if hasattr(self, "btn_set_home"):
             self.btn_set_home.setEnabled(es_admin)
+        if hasattr(self, "_update_col3_layout_scaling"):
+            self._update_col3_layout_scaling()
 
     def alternar_pantalla_completa(self):
         if self.isFullScreen():
