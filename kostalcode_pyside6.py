@@ -360,7 +360,33 @@ CONFIG_DEFAULT = {
 }
 
 
+def obtener_piezas_por_cabezal_receta(rec):
+    """Retorna cuántas piezas simultáneas pinta el cabezal por cada movimiento XY (1, 2, 3...)."""
+    if not isinstance(rec, dict):
+        return 1
+    raw_cab = rec.get("piezas_por_cabezal", None)
+    if raw_cab is not None and str(raw_cab).strip() != "":
+        try:
+            return max(1, min(50, int(float(str(raw_cab).strip()))))
+        except (ValueError, TypeError):
+            pass
+    # Inferencia retrocompatible si la receta guardó un total > filas*cols (ej. 30 en matriz 5x2 -> 3)
+    try:
+        f = max(1, min(5, int(rec.get("filas", 1))))
+        c = max(1, min(5, int(rec.get("columnas", rec.get("cols", 1)))))
+        cap_mov = f * c
+        raw_pz = rec.get("piezas_por_jig", rec.get("piezas", None))
+        if raw_pz is not None and str(raw_pz).strip() != "":
+            pz = max(1, int(float(str(raw_pz).strip())))
+            if pz > cap_mov and pz % cap_mov == 0:
+                return max(1, min(50, pz // cap_mov))
+    except (ValueError, TypeError):
+        pass
+    return 1
+
+
 def obtener_piezas_por_jig_receta(rec):
+    """Retorna las piezas activas totales del Jig (independiente de filas*cols para soportar cabezales múltiples)."""
     if not isinstance(rec, dict):
         return 1
     try:
@@ -368,18 +394,38 @@ def obtener_piezas_por_jig_receta(rec):
     except (ValueError, TypeError):
         f = 1
     try:
-        c = max(1, min(5, int(rec.get("columnas", 1))))
+        c = max(1, min(5, int(rec.get("columnas", rec.get("cols", 1)))))
+    except (ValueError, TypeError):
+        c = 1
+    pz_cab = obtener_piezas_por_cabezal_receta(rec)
+    default_pz = f * c * pz_cab
+    raw_pz = rec.get("piezas_por_jig", rec.get("piezas", None))
+    if raw_pz is None or str(raw_pz).strip() == "":
+        return default_pz
+    try:
+        pz = int(float(str(raw_pz).strip()))
+    except (ValueError, TypeError):
+        pz = default_pz
+    return max(1, pz)
+
+
+def obtener_movimientos_por_jig_receta(rec):
+    """Retorna cuántos movimientos XY (posiciones en matriz 1..25) ejecuta el cabezal por Jig."""
+    if not isinstance(rec, dict):
+        return 1
+    try:
+        f = max(1, min(5, int(rec.get("filas", 1))))
+    except (ValueError, TypeError):
+        f = 1
+    try:
+        c = max(1, min(5, int(rec.get("columnas", rec.get("cols", 1)))))
     except (ValueError, TypeError):
         c = 1
     max_cap = f * c
-    raw_pz = rec.get("piezas_por_jig", None)
-    if raw_pz is None or str(raw_pz).strip() == "":
-        return max_cap
-    try:
-        pz = int(float(raw_pz))
-    except (ValueError, TypeError):
-        pz = max_cap
-    return max(1, min(max_cap, pz))
+    pz_jig = obtener_piezas_por_jig_receta(rec)
+    pz_cab = obtener_piezas_por_cabezal_receta(rec)
+    mov_necesarios = max(1, int(math.ceil(pz_jig / max(1, pz_cab))))
+    return min(max_cap, mov_necesarios)
 
 
 def buscar_recurso(nombre_archivo):
@@ -426,8 +472,10 @@ def _normalizar_lista_recetas(recetas):
         cols_val = rec.get("cols", rec.get("columnas", 5))
         rec["cols"] = max(1, min(5, int(cols_val)))
         rec["columnas"] = rec["cols"]
+        rec["piezas_por_cabezal"] = obtener_piezas_por_cabezal_receta(rec)
         rec["piezas_por_jig"] = obtener_piezas_por_jig_receta(rec)
         rec["piezas"] = rec["piezas_por_jig"]
+        rec["movimientos_por_jig"] = obtener_movimientos_por_jig_receta(rec)
         dx_val = float(rec.get("delta_x", rec.get("espacio_x", 20.0)))
         dy_val = float(rec.get("delta_y", rec.get("espacio_y", 35.0)))
         rec["delta_x"] = dx_val
@@ -612,6 +660,8 @@ class KostalDatabaseManager:
                         for r in conn.execute("PRAGMA table_info(recetas_programas)").fetchall()
                     }
                     migraciones_receta = [
+                        ("piezas_por_cabezal", "INTEGER NOT NULL DEFAULT 1"),
+                        ("movimientos_por_jig", "INTEGER NOT NULL DEFAULT 15"),
                         ("corridas", "INTEGER NOT NULL DEFAULT 0"),
                         ("piezas_producidas_total", "INTEGER NOT NULL DEFAULT 0"),
                         ("piezas_producidas_ok", "INTEGER NOT NULL DEFAULT 0"),
@@ -652,6 +702,8 @@ class KostalDatabaseManager:
                     for row in rows_rec:
                         nom = row["nombre"]
                         row_keys = set(row.keys())
+                        cab_db = int(row["piezas_por_cabezal"]) if "piezas_por_cabezal" in row_keys else 1
+                        mov_db = int(row["movimientos_por_jig"]) if "movimientos_por_jig" in row_keys else (int(row["filas"]) * int(row["columnas"]))
                         corr_db = int(row["corridas"]) if "corridas" in row_keys else 0
                         tot_db = int(row["piezas_producidas_total"]) if "piezas_producidas_total" in row_keys else 0
                         nok_db = int(row["piezas_producidas_nok"]) if "piezas_producidas_nok" in row_keys else 0
@@ -664,6 +716,8 @@ class KostalDatabaseManager:
                                 "filas": int(row["filas"]),
                                 "cols": int(row["columnas"]),
                                 "columnas": int(row["columnas"]),
+                                "piezas_por_cabezal": cab_db,
+                                "movimientos_por_jig": mov_db,
                                 "piezas": int(row["piezas_por_jig"]),
                                 "piezas_por_jig": int(row["piezas_por_jig"]),
                                 "delta_x": float(row["delta_x"]),
@@ -822,7 +876,9 @@ class KostalDatabaseManager:
             modelo = str(rec.get("modelo", "M1"))
             filas = max(1, min(5, int(rec.get("filas", 3))))
             cols = max(1, min(5, int(rec.get("columnas", rec.get("cols", 5)))))
+            pz_cab = obtener_piezas_por_cabezal_receta(rec)
             pz = obtener_piezas_por_jig_receta(rec)
+            mov_jig = obtener_movimientos_por_jig_receta(rec)
             dx = float(rec.get("espacio_x", rec.get("delta_x", 20.0)))
             dy = float(rec.get("espacio_y", rec.get("delta_y", 35.0)))
             cx = limitar_coord_x(rec.get("cero_x", rec.get("cero_guardado_x", 0.0)))
@@ -838,16 +894,19 @@ class KostalDatabaseManager:
             conn.execute(
                 """
                 INSERT INTO recetas_programas (
-                    nombre, pieza, modelo, filas, columnas, piezas_por_jig,
+                    nombre, pieza, modelo, filas, columnas, piezas_por_cabezal,
+                    movimientos_por_jig, piezas_por_jig,
                     delta_x, delta_y, cero_x, cero_y, cero_calibrado,
                     velocidad, imagen, corridas, piezas_producidas_total,
                     piezas_producidas_ok, piezas_producidas_nok, actualizado_en
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(nombre) DO UPDATE SET
                     pieza=excluded.pieza,
                     modelo=excluded.modelo,
                     filas=excluded.filas,
                     columnas=excluded.columnas,
+                    piezas_por_cabezal=excluded.piezas_por_cabezal,
+                    movimientos_por_jig=excluded.movimientos_por_jig,
                     piezas_por_jig=excluded.piezas_por_jig,
                     delta_x=excluded.delta_x,
                     delta_y=excluded.delta_y,
@@ -863,8 +922,8 @@ class KostalDatabaseManager:
                     actualizado_en=excluded.actualizado_en
                 """,
                 (
-                    nom, pieza, modelo, filas, cols, pz, dx, dy, cx, cy, cal,
-                    vel, img, corr, tot_p, ok_p, nok_p, ahora
+                    nom, pieza, modelo, filas, cols, pz_cab, mov_jig, pz, dx, dy,
+                    cx, cy, cal, vel, img, corr, tot_p, ok_p, nok_p, ahora
                 ),
             )
             conn.execute(
@@ -1256,7 +1315,8 @@ class KostalDatabaseManager:
                 os.path.join(self.db_dir, "catalogo_programas.csv"),
                 [
                     "id", "nombre", "pieza", "modelo", "filas", "columnas",
-                    "piezas_por_jig", "delta_x", "delta_y", "cero_x", "cero_y",
+                    "piezas_por_cabezal", "movimientos_por_jig", "piezas_por_jig",
+                    "delta_x", "delta_y", "cero_x", "cero_y",
                     "cero_calibrado", "velocidad", "corridas",
                     "piezas_producidas_total", "piezas_producidas_ok",
                     "piezas_producidas_nok", "imagen", "actualizado_en",
@@ -1414,8 +1474,8 @@ class KostalDatabaseManager:
                 ws_rec = wb.create_sheet(title="Catalogo_Programas")
                 headers_rec = [
                     "ID", "Nombre del Programa / Receta", "Pieza", "Modelo",
-                    "Filas", "Columnas", "Piezas por Jig", "Dist. X (mm)",
-                    "Dist. Y (mm)", "Punto 0 X (mm)", "Punto 0 Y (mm)",
+                    "Filas", "Columnas", "Pz/Cabezal", "Mov./Jig", "Piezas por Jig",
+                    "Dist. X (mm)", "Dist. Y (mm)", "Punto 0 X (mm)", "Punto 0 Y (mm)",
                     "Set 0 Calibrado", "Velocidad (mm/s)", "Ciclos",
                     "Producidas Total", "Producidas OK", "Producidas NO OK",
                     "Archivo Imagen", "Última Actualización",
@@ -1428,6 +1488,8 @@ class KostalDatabaseManager:
                         r.get("modelo", ""),
                         int(r.get("filas", 3)),
                         int(r.get("columnas", 5)),
+                        int(r.get("piezas_por_cabezal", 1)),
+                        int(r.get("movimientos_por_jig", int(r.get("filas", 3)) * int(r.get("columnas", 5)))),
                         int(r.get("piezas_por_jig", 15)),
                         float(r.get("delta_x", 20.0)),
                         float(r.get("delta_y", 35.0)),
@@ -1448,7 +1510,7 @@ class KostalDatabaseManager:
                     ws_rec,
                     headers_rec,
                     rows_rec,
-                    [8, 30, 24, 14, 10, 11, 15, 14, 14, 15, 15, 16, 16, 11, 16, 14, 16, 24, 21],
+                    [8, 30, 24, 14, 10, 11, 13, 12, 15, 14, 14, 15, 15, 16, 16, 11, 16, 14, 16, 24, 21],
                 )
 
                 # Hoja 4: KPI_Tiempo_Real
@@ -2296,6 +2358,8 @@ class FixtureCanvasWidget(QWidget):
         self.filas = 3
         self.cols = 5
         self.piezas_por_jig = 15
+        self.movimientos_por_jig = 15
+        self.piezas_por_cabezal = 1
         self.patron = "vertical"
         self.mostrar_coords = True
         self.coordenadas = []       # [(x, y), ...] según orden de recorrido
@@ -2320,11 +2384,18 @@ class FixtureCanvasWidget(QWidget):
 
     def configure_matrix(
         self, filas, cols, piezas_por_jig, patron, coordenadas, estados,
-        indice_activo, mostrar_coords=True, imagen_pieza="", pasada_actual=1, total_pasadas=1
+        indice_activo, mostrar_coords=True, imagen_pieza="", pasada_actual=1, total_pasadas=1,
+        movimientos_por_jig=None, piezas_por_cabezal=1
     ):
         self.filas = max(1, min(5, int(filas)))
         self.cols = max(1, min(5, int(cols)))
+        self.piezas_por_cabezal = max(1, int(piezas_por_cabezal or 1))
         self.piezas_por_jig = max(1, int(piezas_por_jig))
+        max_cap = self.filas * self.cols
+        if movimientos_por_jig is None:
+            self.movimientos_por_jig = min(max_cap, max(1, int(math.ceil(self.piezas_por_jig / self.piezas_por_cabezal))))
+        else:
+            self.movimientos_por_jig = max(1, min(max_cap, int(movimientos_por_jig)))
         self.patron = patron
         self.coordenadas = list(coordenadas)
         self.estados = list(estados)
@@ -2379,7 +2450,7 @@ class FixtureCanvasWidget(QWidget):
         pos = event.position()
         found = -1
         for seq_idx, rect in self._card_rects.items():
-            if rect.contains(pos) and seq_idx < self.piezas_por_jig:
+            if rect.contains(pos) and seq_idx < self.movimientos_por_jig:
                 found = seq_idx
                 break
         if found != self._hover_idx:
@@ -2443,19 +2514,19 @@ class FixtureCanvasWidget(QWidget):
                 seq_centers[seq_idx] = rect.center()
 
         # Línea guía del patrón de recorrido entre cavidades activas
-        if self.piezas_por_jig > 1:
+        if self.movimientos_por_jig > 1:
             route_pen = QPen(QColor(148, 163, 184, 110), 2.0, Qt.DashLine)
             painter.setPen(route_pen)
-            for idx in range(self.piezas_por_jig - 1):
+            for idx in range(self.movimientos_por_jig - 1):
                 if idx in seq_centers and (idx + 1) in seq_centers:
                     painter.drawLine(seq_centers[idx], seq_centers[idx + 1])
 
-        # Dibujar cada cavidad
+        # Dibujar cada cavidad / estación de movimiento
         for r in range(self.filas):
             for c in range(self.cols):
                 seq_idx = self._grid_to_seq_index(r, c)
                 rect = self._card_rects[seq_idx]
-                habilitada = seq_idx < self.piezas_por_jig
+                habilitada = seq_idx < self.movimientos_por_jig
 
                 if not habilitada:
                     painter.setPen(QPen(QColor("#E2E8F0"), 1, Qt.DashLine))
@@ -2504,11 +2575,13 @@ class FixtureCanvasWidget(QWidget):
                 painter.setBrush(bg_col)
                 painter.drawRoundedRect(rect, 8, 8)
 
-                # Encabezado de tarjeta: #Pieza a la izquierda y Punto 0 / Estado a la derecha
+                # Encabezado de tarjeta: #Movimiento/Pieza a la izquierda y Punto 0 / Estado a la derecha
                 top_bar = QRectF(rect.left() + 6, rect.top() + 4, rect.width() - 12, 18)
                 painter.setPen(QColor("#0F172A"))
                 painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
                 lbl_num = f"#{seq_idx + 1:02d}" + (" [SET 0]" if seq_idx == 0 else "")
+                if self.piezas_por_cabezal > 1:
+                    lbl_num += f" ×{self.piezas_por_cabezal}"
                 painter.drawText(top_bar, Qt.AlignLeft | Qt.AlignVCenter, lbl_num)
 
                 painter.setPen(badge_col)
@@ -2793,13 +2866,20 @@ class InWindowOverlayLayer(QWidget):
             if not rec:
                 return
             pz = obtener_piezas_por_jig_receta(rec)
+            pz_cab = obtener_piezas_por_cabezal_receta(rec)
+            movs = obtener_movimientos_por_jig_receta(rec)
             tot_r = int(rec.get("piezas_producidas_total", 0) or 0)
             ok_r = int(rec.get("piezas_producidas_ok", 0) or 0)
             nok_r = int(rec.get("piezas_producidas_nok", 0) or 0)
             cic_r = int(rec.get("corridas", 0) or 0)
             lbl_p_nom.setText(f"Pieza: {rec.get('pieza', '-')}")
             lbl_p_mod.setText(f"Modelo: {rec.get('modelo', '-')}  |  Velocidad: {rec.get('vel_x', 100):.0f} mm/s")
-            lbl_p_mat.setText(f"Matriz Fixture: {rec.get('filas', 1)} × {rec.get('columnas', 1)} ({pz} Piezas/Jig)")
+            if pz_cab > 1:
+                lbl_p_mat.setText(
+                    f"Matriz: {rec.get('filas', 1)} × {rec.get('columnas', 1)} ({movs} Mov × {pz_cab} Pz/Cab = {pz} Pz/Jig)"
+                )
+            else:
+                lbl_p_mat.setText(f"Matriz Fixture: {rec.get('filas', 1)} × {rec.get('columnas', 1)} ({pz} Piezas/Jig)")
             lbl_p_dist.setText(f"Dist. C-C: X={rec.get('espacio_x', 0):.1f} mm | Y={rec.get('espacio_y', 0):.1f} mm")
             lbl_p_prod.setText(f"Acumulado Receta: {tot_r} pz  (OK: {ok_r} | NOK: {nok_r} | Ciclos: {cic_r})")
             cx = float(rec.get("cero_x", 0.0))
@@ -3238,6 +3318,8 @@ class KostalHmiWindow(QMainWindow):
         # Matriz dinámica
         self.matriz_filas = 3
         self.matriz_cols = 5
+        self.piezas_por_cabezal_actual = 1
+        self.movimientos_por_jig_actual = 15
         self.piezas_por_jig_actual = 15
         self.matriz_delta_x = 20.0
         self.matriz_delta_y = 35.0
@@ -3246,6 +3328,7 @@ class KostalHmiWindow(QMainWindow):
         self.estados_piezas = []
         self.indice_matriz_actual = 0
         self.pasada_actual_pieza = 1
+        self.movimientos_realizados_lote = 0
         self.piezas_realizadas_lote = 0
 
         self.produccion_total = int(self.config.get("produccion_total", 0))
@@ -4523,7 +4606,7 @@ class KostalHmiWindow(QMainWindow):
                     x = limitar_coord_x(raw_x)
                     y = limitar_coord_y(raw_y)
                     seq_num = len(self.matriz_coordenadas) + 1
-                    if seq_num <= self.piezas_por_jig_actual and (abs(x - raw_x) > 0.01 or abs(y - raw_y) > 0.01):
+                    if seq_num <= self.movimientos_por_jig_actual and (abs(x - raw_x) > 0.01 or abs(y - raw_y) > 0.01):
                         piezas_truncadas.append(f"P{seq_num:02d}(C{c+1}F{r+1}: {raw_x:.1f},{raw_y:.1f}->{x:.1f},{y:.1f})")
                     self.matriz_coordenadas.append((round(x, 2), round(y, 2)))
         else:
@@ -4534,13 +4617,13 @@ class KostalHmiWindow(QMainWindow):
                     x = limitar_coord_x(raw_x)
                     y = limitar_coord_y(raw_y)
                     seq_num = len(self.matriz_coordenadas) + 1
-                    if seq_num <= self.piezas_por_jig_actual and (abs(x - raw_x) > 0.01 or abs(y - raw_y) > 0.01):
+                    if seq_num <= self.movimientos_por_jig_actual and (abs(x - raw_x) > 0.01 or abs(y - raw_y) > 0.01):
                         piezas_truncadas.append(f"P{seq_num:02d}(C{c+1}F{r+1}: {raw_x:.1f},{raw_y:.1f}->{x:.1f},{y:.1f})")
                     self.matriz_coordenadas.append((round(x, 2), round(y, 2)))
 
-        # Detectar coordenadas consecutivas idénticas dentro de las piezas activas del jig
+        # Detectar coordenadas consecutivas idénticas dentro de las posiciones activas del jig
         duplicadas_consecutivas = []
-        activas_coords = self.matriz_coordenadas[: self.piezas_por_jig_actual]
+        activas_coords = self.matriz_coordenadas[: self.movimientos_por_jig_actual]
         for idx_c in range(1, len(activas_coords)):
             if activas_coords[idx_c] == activas_coords[idx_c - 1]:
                 duplicadas_consecutivas.append(f"P{idx_c:02d}==P{idx_c+1:02d} en {activas_coords[idx_c]}")
@@ -4573,7 +4656,9 @@ class KostalHmiWindow(QMainWindow):
         self.config["receta_activa"] = nombre
         self.matriz_filas = max(1, min(5, int(rec.get("filas", 3))))
         self.matriz_cols = max(1, min(5, int(rec.get("columnas", 5))))
+        self.piezas_por_cabezal_actual = obtener_piezas_por_cabezal_receta(rec)
         self.piezas_por_jig_actual = obtener_piezas_por_jig_receta(rec)
+        self.movimientos_por_jig_actual = obtener_movimientos_por_jig_receta(rec)
         self.matriz_delta_x = float(rec.get("espacio_x", 20.0))
         self.matriz_delta_y = float(rec.get("espacio_y", 35.0))
         self.matriz_dist_diag = round((self.matriz_delta_x ** 2 + self.matriz_delta_y ** 2) ** 0.5, 2)
@@ -4585,6 +4670,7 @@ class KostalHmiWindow(QMainWindow):
 
         self.indice_matriz_actual = 0
         self.pasada_actual_pieza = 1
+        self.movimientos_realizados_lote = 0
         self.piezas_realizadas_lote = 0
         self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
 
@@ -4731,9 +4817,15 @@ class KostalHmiWindow(QMainWindow):
 
         self.lbl_proc_pieza.setText(f"{self._tr('pieza')} {pieza_txt}")
         self.lbl_proc_modelo.setText(f"{self._tr('modelo')} {modelo_txt}")
-        self.lbl_proc_matriz_dim.setText(
-            f"{self._tr('matriz_fixture')} {self.matriz_filas} × {self.matriz_cols} ({self.piezas_por_jig_actual} PZ/Jig)"
-        )
+        if self.piezas_por_cabezal_actual > 1:
+            self.lbl_proc_matriz_dim.setText(
+                f"{self._tr('matriz_fixture')} {self.matriz_filas} × {self.matriz_cols} "
+                f"({self.movimientos_por_jig_actual} Mov × {self.piezas_por_cabezal_actual} Pz/Cab = {self.piezas_por_jig_actual} PZ)"
+            )
+        else:
+            self.lbl_proc_matriz_dim.setText(
+                f"{self._tr('matriz_fixture')} {self.matriz_filas} × {self.matriz_cols} ({self.piezas_por_jig_actual} PZ/Jig)"
+            )
         self.lbl_proc_matriz_dist.setText(
             f"{self._tr('dist_cc')} X:{self.matriz_delta_x:.1f} mm | Y:{self.matriz_delta_y:.1f} mm"
         )
@@ -4811,9 +4903,14 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_title_fixture.setText(
             f"{self._tr('estado_fixture')} ({self.matriz_filas} × {self.matriz_cols})"
         )
-        self.lbl_matriz_dim_badge.setText(
-            f"MATRIZ: {self.matriz_filas} × {self.matriz_cols} ({self.piezas_por_jig_actual} PZ/JIG)"
-        )
+        if self.piezas_por_cabezal_actual > 1:
+            self.lbl_matriz_dim_badge.setText(
+                f"MATRIZ: {self.matriz_filas} × {self.matriz_cols} ({self.movimientos_por_jig_actual} MOV × {self.piezas_por_cabezal_actual} PZ/CAB = {self.piezas_por_jig_actual} PZ/JIG)"
+            )
+        else:
+            self.lbl_matriz_dim_badge.setText(
+                f"MATRIZ: {self.matriz_filas} × {self.matriz_cols} ({self.piezas_por_jig_actual} PZ/JIG)"
+            )
         trunc_warn = getattr(self, "matriz_truncada_info", "")
         if trunc_warn:
             self.lbl_matriz_dist_badge.setText(
@@ -4917,6 +5014,8 @@ class KostalHmiWindow(QMainWindow):
             imagen_pieza=img_txt,
             pasada_actual=self.pasada_actual_pieza,
             total_pasadas=self.pasadas_tampo,
+            movimientos_por_jig=self.movimientos_por_jig_actual,
+            piezas_por_cabezal=self.piezas_por_cabezal_actual,
         )
 
 
@@ -5014,15 +5113,20 @@ class KostalHmiWindow(QMainWindow):
                 )
                 return
 
-            # Sincronización estricta entre indice_matriz_actual y piezas_realizadas_lote:
-            # Evita que clics previos en el fixture o pruebas en modo manual salten las primeras piezas
-            if self.piezas_realizadas_lote >= self.piezas_por_jig_actual or self.piezas_realizadas_lote <= 0:
+            # Sincronización estricta entre indice_matriz_actual y movimientos_realizados_lote:
+            # Evita que clics previos en el fixture o pruebas en modo manual salten posiciones
+            if (
+                self.movimientos_realizados_lote >= self.movimientos_por_jig_actual
+                or self.piezas_realizadas_lote >= self.piezas_por_jig_actual
+                or self.movimientos_realizados_lote <= 0
+            ):
                 self.indice_matriz_actual = 0
+                self.movimientos_realizados_lote = 0
                 self.piezas_realizadas_lote = 0
                 self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
             else:
-                # Reanudación de lote pausado a mitad del Jig: alinear índice exactamente con piezas_realizadas_lote
-                self.indice_matriz_actual = min(self.piezas_realizadas_lote, self.piezas_por_jig_actual - 1)
+                # Reanudación de lote pausado a mitad del Jig: alinear índice con movimientos_realizados_lote
+                self.indice_matriz_actual = min(self.movimientos_realizados_lote, self.movimientos_por_jig_actual - 1)
                 total_cells = self.matriz_filas * self.matriz_cols
                 self.estados_piezas = [
                     "ok" if i < self.indice_matriz_actual else "pendiente"
@@ -5034,7 +5138,7 @@ class KostalHmiWindow(QMainWindow):
             if self.indice_matriz_actual < len(self.estados_piezas):
                 self.estados_piezas[self.indice_matriz_actual] = "activa"
 
-            # Limpiar handshake PINTADO residual en el PLC, enviar primero coordenadas de la pieza #1
+            # Limpiar handshake PINTADO residual en el PLC, enviar primero coordenadas de la posición #1
             # y posteriormente habilitar la bandera maestra PINTAR=True para que el PLC nunca opere
             # con la coordenada anterior.
             self.opc_worker.enqueue_write("PINTADO", False)
@@ -5045,8 +5149,8 @@ class KostalHmiWindow(QMainWindow):
                 self.sim_cycle_timer.start(1100)
 
             log_debug_hmi(
-                f"Ciclo de pintado INICIADO en pieza #{self.indice_matriz_actual + 1:02d}/{self.piezas_por_jig_actual:02d} "
-                f"(Receta='{self.config.get('receta_activa', '')}')"
+                f"Ciclo de pintado INICIADO en pos #{self.indice_matriz_actual + 1:02d}/{self.movimientos_por_jig_actual:02d} "
+                f"({self.piezas_por_cabezal_actual} pz/golpe, meta={self.piezas_por_jig_actual} pz, Receta='{self.config.get('receta_activa', '')}')"
             )
         else:
             self.estado_pintando = False
@@ -5063,7 +5167,7 @@ class KostalHmiWindow(QMainWindow):
                 exportar_archivos=True,
             )
             log_debug_hmi(
-                f"Ciclo de pintado PAUSADO/DETENIDO por el operador en pieza #{self.indice_matriz_actual + 1:02d}/{self.piezas_por_jig_actual:02d}."
+                f"Ciclo de pintado PAUSADO/DETENIDO por el operador en pos #{self.indice_matriz_actual + 1:02d}/{self.movimientos_por_jig_actual:02d}."
             )
 
         self._refresh_all_operator_ui()
@@ -5077,10 +5181,16 @@ class KostalHmiWindow(QMainWindow):
         self.pos_actual_y = ty
         self.inp_coord_x.setText(f"{tx:.1f}")
         self.inp_coord_y.setText(f"{ty:.1f}")
-        etiqueta_pieza = (
-            f"Pieza #{idx + 1:02d}/{self.piezas_por_jig_actual:02d} "
-            f"(Pasada {self.pasada_actual_pieza}/{self.pasadas_tampo})"
-        )
+        if self.piezas_por_cabezal_actual > 1:
+            etiqueta_pieza = (
+                f"Mov #{idx + 1:02d}/{self.movimientos_por_jig_actual:02d} (×{self.piezas_por_cabezal_actual} pz) "
+                f"(Pasada {self.pasada_actual_pieza}/{self.pasadas_tampo})"
+            )
+        else:
+            etiqueta_pieza = (
+                f"Pieza #{idx + 1:02d}/{self.piezas_por_jig_actual:02d} "
+                f"(Pasada {self.pasada_actual_pieza}/{self.pasadas_tampo})"
+            )
         self.opc_worker.enqueue_move_xy(
             tx,
             ty,
@@ -5103,24 +5213,31 @@ class KostalHmiWindow(QMainWindow):
         if not self.estado_pintando:
             return
 
-        # Verificar si faltan pasadas de tampo en la misma pieza
+        # Verificar si faltan pasadas de tampo en la misma posición
         if self.pasada_actual_pieza < self.pasadas_tampo:
             self.pasada_actual_pieza += 1
             log_debug_hmi(
-                f"[CICLO-PASADA] Segunda pasada en Pieza #{self.indice_matriz_actual + 1:02d}/{self.piezas_por_jig_actual:02d} "
+                f"[CICLO-PASADA] Segunda pasada en Pos #{self.indice_matriz_actual + 1:02d}/{self.movimientos_por_jig_actual:02d} "
                 f"({self.pasada_actual_pieza}/{self.pasadas_tampo})"
             )
             self._enviar_pieza_actual_al_plc()
             self._refresh_all_operator_ui()
             return
 
-        # Marcar pieza actual como completada OK y contabilizar automáticamente
-        pieza_completada_num = self.indice_matriz_actual + 1
+        # Marcar posición actual como completada OK y sumar piezas reales según el cabezal (1, 2, 3...)
+        mov_completado_num = self.indice_matriz_actual + 1
         if self.indice_matriz_actual < len(self.estados_piezas):
             self.estados_piezas[self.indice_matriz_actual] = "ok"
 
-        self.piezas_realizadas_lote += 1
-        self.produccion_total += 1
+        restantes_lote = max(0, self.piezas_por_jig_actual - self.piezas_realizadas_lote)
+        pz_este_mov = (
+            min(self.piezas_por_cabezal_actual, restantes_lote)
+            if restantes_lote > 0
+            else self.piezas_por_cabezal_actual
+        )
+        self.movimientos_realizados_lote += 1
+        self.piezas_realizadas_lote += pz_este_mov
+        self.produccion_total += pz_este_mov
         self.produccion_ok = max(0, self.produccion_total - self.produccion_nok)
         self.config["produccion_total"] = self.produccion_total
         self.config["produccion_ok"] = self.produccion_ok
@@ -5128,21 +5245,22 @@ class KostalHmiWindow(QMainWindow):
         # Contabilizar también de forma independiente sobre la receta activa
         rec_act = self._obtener_receta_activa_obj()
         if rec_act is not None:
-            rec_tot = max(0, int(rec_act.get("piezas_producidas_total", 0) or 0)) + 1
+            rec_tot = max(0, int(rec_act.get("piezas_producidas_total", 0) or 0)) + pz_este_mov
             rec_nok = max(0, min(rec_tot, int(rec_act.get("piezas_producidas_nok", 0) or 0)))
             rec_act["piezas_producidas_total"] = rec_tot
             rec_act["piezas_producidas_nok"] = rec_nok
             rec_act["piezas_producidas_ok"] = max(0, rec_tot - rec_nok)
 
         log_debug_hmi(
-            f"[CICLO-OK] Pieza #{pieza_completada_num:02d}/{self.piezas_por_jig_actual:02d} completada "
+            f"[CICLO-OK] Mov #{mov_completado_num:02d}/{self.movimientos_por_jig_actual:02d} (+{pz_este_mov} pz) "
             f"(Lote={self.piezas_realizadas_lote}/{self.piezas_por_jig_actual}, Total={self.produccion_total})"
         )
 
-        # Verificar si se completó el Jig entero (tanto por contador de lote como por índice de matriz)
+        # Verificar si se completó el Jig entero (tanto por movimientos ejecutados como por piezas)
         if (
-            self.piezas_realizadas_lote >= self.piezas_por_jig_actual
-            or (self.indice_matriz_actual + 1) >= self.piezas_por_jig_actual
+            self.movimientos_realizados_lote >= self.movimientos_por_jig_actual
+            or (self.indice_matriz_actual + 1) >= self.movimientos_por_jig_actual
+            or self.piezas_realizadas_lote >= self.piezas_por_jig_actual
         ):
             self.estado_pintando = False
             self.sim_cycle_timer.stop()
@@ -5154,7 +5272,7 @@ class KostalHmiWindow(QMainWindow):
             DB_MANAGER.registrar_ciclo_produccion(
                 self.config,
                 self.usuario_actual,
-                self.piezas_por_jig_actual,
+                self.piezas_realizadas_lote,
                 self.produccion_total,
                 self.produccion_ok,
                 self.produccion_nok,
@@ -5163,13 +5281,15 @@ class KostalHmiWindow(QMainWindow):
             if hasattr(self, "tbl_stats_recetas"):
                 self._refresh_admin_stats_table()
             log_debug_hmi(
-                f"Fin de ciclo automático: +{self.piezas_por_jig_actual} piezas (Total={self.produccion_total}, OK={self.produccion_ok}, NOK={self.produccion_nok}). Retornando a Home."
+                f"Fin de ciclo automático: +{self.piezas_realizadas_lote} piezas "
+                f"({self.movimientos_realizados_lote} mov × {self.piezas_por_cabezal_actual} pz/cab | "
+                f"Total={self.produccion_total}, OK={self.produccion_ok}, NOK={self.produccion_nok}). Retornando a Home."
             )
             self.ejecutar_home_general()
             QTimer.singleShot(1200, self._reiniciar_matriz_post_ciclo)
             return
 
-        # Avanzar exactamente a la siguiente cavidad en secuencia
+        # Avanzar exactamente a la siguiente posición en secuencia
         self.indice_matriz_actual += 1
         self.pasada_actual_pieza = 1
         if self.indice_matriz_actual < len(self.estados_piezas):
@@ -5183,6 +5303,7 @@ class KostalHmiWindow(QMainWindow):
             return
         self.indice_matriz_actual = 0
         self.pasada_actual_pieza = 1
+        self.movimientos_realizados_lote = 0
         self.piezas_realizadas_lote = 0
         self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
         self._refresh_all_operator_ui()
@@ -5195,7 +5316,7 @@ class KostalHmiWindow(QMainWindow):
 
     @Slot(int)
     def _on_fixture_cavity_clicked(self, seq_idx):
-        if seq_idx >= self.piezas_por_jig_actual:
+        if seq_idx >= self.movimientos_por_jig_actual:
             return
         if self.estado_pintando:
             return
@@ -5258,6 +5379,7 @@ class KostalHmiWindow(QMainWindow):
             # para que cualquier prueba manual de cavidades no desfase el inicio del ciclo automático.
             self.indice_matriz_actual = 0
             self.pasada_actual_pieza = 1
+            self.movimientos_realizados_lote = 0
             self.piezas_realizadas_lote = 0
             self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
         self.opc_worker.enqueue_write("MANUAL", self.estado_manual)
@@ -5439,6 +5561,7 @@ class KostalHmiWindow(QMainWindow):
 
         self.indice_matriz_actual = 0
         self.pasada_actual_pieza = 1
+        self.movimientos_realizados_lote = 0
         self.piezas_realizadas_lote = 0
         self.estados_piezas = ["pendiente"] * (self.matriz_filas * self.matriz_cols)
 
@@ -5767,6 +5890,7 @@ class KostalHmiWindow(QMainWindow):
         self.adm_rec_modelo = QLineEdit()
         self.adm_rec_filas = QLineEdit("3")
         self.adm_rec_cols = QLineEdit("5")
+        self.adm_rec_pz_cabezal = QLineEdit("1")
         self.adm_rec_pz_jig = QLineEdit("15")
         self.adm_rec_dx = QLineEdit("20.0")
         self.adm_rec_dy = QLineEdit("35.0")
@@ -5782,8 +5906,8 @@ class KostalHmiWindow(QMainWindow):
             ("Velocidad Ejes (mm/s):", self.adm_rec_vel, 1, 2),
             ("Filas de Matriz (1-5):", self.adm_rec_filas, 2, 0),
             ("Columnas de Matriz (1-5):", self.adm_rec_cols, 2, 2),
-            ("Piezas Activas por Jig:", self.adm_rec_pz_jig, 3, 0),
-            ("Imagen de Pieza:", self.adm_rec_img, 3, 2),
+            ("Piezas por Cabezal (1, 2, 3...):", self.adm_rec_pz_cabezal, 3, 0),
+            ("Piezas Activas por Jig:", self.adm_rec_pz_jig, 3, 2),
             ("Distancia C-C X (mm):", self.adm_rec_dx, 4, 0),
             ("Distancia C-C Y (mm):", self.adm_rec_dy, 4, 2),
             ("Punto 0 — Cero X (0-88 mm):", self.adm_rec_cx, 5, 0),
@@ -5793,30 +5917,38 @@ class KostalHmiWindow(QMainWindow):
             l = QLabel(label_txt)
             l.setStyleSheet("font-size: 13px; font-weight: 700; color: #334155;")
             form.addWidget(l, r, c)
-            widget.setMinimumHeight(42)
+            widget.setMinimumHeight(40)
             form.addWidget(widget, r, c + 1)
 
-        self._adm_prev_matrix_cap = 15
+        lbl_img_f = QLabel("Imagen de Pieza:")
+        lbl_img_f.setStyleSheet("font-size: 13px; font-weight: 700; color: #334155;")
+        form.addWidget(lbl_img_f, 6, 0)
+        self.adm_rec_img.setMinimumHeight(40)
+        form.addWidget(self.adm_rec_img, 6, 1, 1, 3)
+
+        self._adm_prev_total_pz = 15
 
         def _sync_pz_on_dim_change(_txt=""):
             try:
                 f_v = max(1, min(5, int(float(self.adm_rec_filas.text() or 0))))
                 c_v = max(1, min(5, int(float(self.adm_rec_cols.text() or 0))))
+                cab_v = max(1, min(50, int(float(self.adm_rec_pz_cabezal.text() or 1))))
             except ValueError:
                 return
             if f_v <= 0 or c_v <= 0:
                 return
-            new_cap = f_v * c_v
+            new_cap = f_v * c_v * cab_v
             try:
                 cur_pz = int(float(self.adm_rec_pz_jig.text() or 0))
             except ValueError:
                 cur_pz = 0
-            if cur_pz <= 0 or cur_pz == self._adm_prev_matrix_cap or cur_pz > new_cap:
+            if cur_pz <= 0 or cur_pz == self._adm_prev_total_pz:
                 self.adm_rec_pz_jig.setText(str(new_cap))
-            self._adm_prev_matrix_cap = new_cap
+            self._adm_prev_total_pz = new_cap
 
         self.adm_rec_filas.textEdited.connect(_sync_pz_on_dim_change)
         self.adm_rec_cols.textEdited.connect(_sync_pz_on_dim_change)
+        self.adm_rec_pz_cabezal.textEdited.connect(_sync_pz_on_dim_change)
 
         lay.addLayout(form)
 
@@ -5895,9 +6027,12 @@ class KostalHmiWindow(QMainWindow):
         self.adm_rec_modelo.setText(rec.get("modelo", ""))
         f_val = max(1, min(5, int(rec.get("filas", 3))))
         c_val = max(1, min(5, int(rec.get("columnas", 5))))
-        self._adm_prev_matrix_cap = f_val * c_val
+        cab_val = obtener_piezas_por_cabezal_receta(rec)
+        self._adm_prev_total_pz = f_val * c_val * cab_val
         self.adm_rec_filas.setText(str(f_val))
         self.adm_rec_cols.setText(str(c_val))
+        if hasattr(self, "adm_rec_pz_cabezal"):
+            self.adm_rec_pz_cabezal.setText(str(cab_val))
         self.adm_rec_pz_jig.setText(str(obtener_piezas_por_jig_receta(rec)))
         self.adm_rec_dx.setText(str(rec.get("espacio_x", 20.0)))
         self.adm_rec_dy.setText(str(rec.get("espacio_y", 35.0)))
@@ -5943,12 +6078,14 @@ class KostalHmiWindow(QMainWindow):
         self.combo_admin_rec.setCurrentText(draft_lbl)
         self.combo_admin_rec.blockSignals(False)
 
-        self._adm_prev_matrix_cap = 15
+        self._adm_prev_total_pz = 15
         self.adm_rec_nombre.setText(nombre_cand)
         self.adm_rec_pieza.setText("Nueva Pieza")
         self.adm_rec_modelo.setText(f"MOD-{n:02d}")
         self.adm_rec_filas.setText("3")
         self.adm_rec_cols.setText("5")
+        if hasattr(self, "adm_rec_pz_cabezal"):
+            self.adm_rec_pz_cabezal.setText("1")
         self.adm_rec_pz_jig.setText("15")
         self.adm_rec_dx.setText("20.0")
         self.adm_rec_dy.setText("35.0")
@@ -6026,8 +6163,9 @@ class KostalHmiWindow(QMainWindow):
         try:
             f = max(1, min(5, int(float(_num_text(self.adm_rec_filas, 3)))))
             c = max(1, min(5, int(float(_num_text(self.adm_rec_cols, 5)))))
-            pz_raw = int(float(_num_text(self.adm_rec_pz_jig, f * c)))
-            pz = max(1, min(f * c, pz_raw))
+            mov_cap = f * c
+            pz_cab = max(1, min(50, int(float(_num_text(self.adm_rec_pz_cabezal, 1)))))
+            pz = max(1, int(float(_num_text(self.adm_rec_pz_jig, mov_cap * pz_cab))))
             dx = abs(float(_num_text(self.adm_rec_dx, 20.0)))
             dy = abs(float(_num_text(self.adm_rec_dy, 35.0)))
             cx = limitar_coord_x(_num_text(self.adm_rec_cx, 0.0))
@@ -6037,11 +6175,33 @@ class KostalHmiWindow(QMainWindow):
             self.overlay.show_message("Error de Formato", "Verifique que los campos numéricos sean válidos.", "error")
             return
 
-        # Sincronizar visualmente el número de piezas por Jig si superó filas*columnas
+        nota_cabezal = ""
+        if pz > (mov_cap * pz_cab):
+            if pz % mov_cap == 0:
+                pz_cab = max(1, min(50, pz // mov_cap))
+                nota_cabezal = (
+                    f"\n\nCabezal Múltiple Detectado: Se configuró 'Piezas por Cabezal' en {pz_cab} "
+                    f"({mov_cap} movimientos × {pz_cab} pz/golpe = {pz} piezas por Jig)."
+                )
+            else:
+                cab_min = max(1, int(math.ceil(pz / mov_cap)))
+                self.overlay.show_message(
+                    "Capacidad de Cabezal Requerida",
+                    f"Con una matriz de {f} × {c} ({mov_cap} movimientos) y {pz_cab} pieza(s) por cabezal "
+                    f"solo se alcanzan {mov_cap * pz_cab} piezas.\n\n"
+                    f"Para lograr {pz} piezas por Jig, configure 'Piezas por Cabezal' en al menos {cab_min}.",
+                    "warn",
+                )
+                return
+
+        mov_jig = min(mov_cap, max(1, int(math.ceil(pz / max(1, pz_cab)))))
+
         self.adm_rec_filas.setText(str(f))
         self.adm_rec_cols.setText(str(c))
+        if hasattr(self, "adm_rec_pz_cabezal"):
+            self.adm_rec_pz_cabezal.setText(str(pz_cab))
         self.adm_rec_pz_jig.setText(str(pz))
-        self._adm_prev_matrix_cap = f * c
+        self._adm_prev_total_pz = mov_cap * pz_cab
 
         datos_receta = {
             "nombre": nuevo_nom,
@@ -6050,6 +6210,8 @@ class KostalHmiWindow(QMainWindow):
             "filas": f,
             "cols": c,
             "columnas": c,
+            "piezas_por_cabezal": pz_cab,
+            "movimientos_por_jig": mov_jig,
             "piezas": pz,
             "piezas_por_jig": pz,
             "delta_x": dx,
@@ -6119,11 +6281,7 @@ class KostalHmiWindow(QMainWindow):
         self._refresh_admin_stats_table()
         self.combo_admin_rec.setCurrentText(nuevo_nom)
 
-        nota_pz = (
-            f"\n\nNota: Piezas Activas por Jig ajustado de {pz_raw} al máximo de la matriz ({f} × {c} = {pz})."
-            if pz_raw != pz
-            else ""
-        )
+        nota_pz = nota_cabezal
 
         recorrido_x = (c - 1) * dx
         recorrido_y = (f - 1) * dy
@@ -6250,6 +6408,9 @@ class KostalHmiWindow(QMainWindow):
             self.tbl_stats_recetas.setRowCount(len(recetas))
             for r_idx, r in enumerate(recetas):
                 pz_jig = obtener_piezas_por_jig_receta(r)
+                pz_cab = obtener_piezas_por_cabezal_receta(r)
+                mov_jig = obtener_movimientos_por_jig_receta(r)
+                pz_txt = f"{pz_jig} ({mov_jig}×{pz_cab})" if pz_cab > 1 else str(pz_jig)
                 ciclos = max(0, int(r.get("corridas", 0) or 0))
                 tot = max(0, int(r.get("piezas_producidas_total", 0) or 0))
                 nok = max(0, min(tot, int(r.get("piezas_producidas_nok", 0) or 0)))
@@ -6259,7 +6420,7 @@ class KostalHmiWindow(QMainWindow):
                     r.get("nombre", "-"),
                     r.get("pieza", "-"),
                     r.get("modelo", "-"),
-                    str(pz_jig),
+                    pz_txt,
                     str(ciclos),
                     str(tot),
                     str(ok),
