@@ -31,17 +31,18 @@ import threading
 
 from PySide6.QtCore import (
     Qt, QThread, Signal, Slot, QTimer, QPropertyAnimation, QEasingCurve,
-    QRectF, QPointF, QSize, QObject, QEvent
+    QRect, QRectF, QPointF, QSize, QObject, QEvent
 )
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QFont, QPixmap, QPainterPath, QIcon,
-    QImage, QLinearGradient, QPalette
+    QImage, QLinearGradient, QPalette, QAction
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QFrame, QStackedWidget,
     QScrollArea, QSizePolicy, QFileDialog, QTableWidget, QTableWidgetItem,
-    QHeaderView, QProgressBar, QAbstractItemView, QListView
+    QHeaderView, QProgressBar, QAbstractItemView, QListView,
+    QStyledItemDelegate, QStyle, QMenu
 )
 
 try:
@@ -3497,6 +3498,152 @@ class InWindowOverlayLayer(QWidget):
 # ==============================================================================
 # HOJA DE ESTILOS INDUSTRIAL QSS (SIN CAJAS GRISES EN ETIQUETAS)
 # ==============================================================================
+class _AdminRecipeComboDelegate(QStyledItemDelegate):
+    """Dibuja cada opción del Recetario con un botón de 3 puntos (⋮) para copiar/editar."""
+
+    copy_requested = Signal(str)
+    select_requested = Signal(str)
+
+    DRAFT_LABEL = "— NUEVA RECETA (Sin guardar) —"
+
+    def __init__(self, combo: QComboBox, parent=None):
+        super().__init__(parent or combo)
+        self._combo = combo
+        self._hover_row = -1
+        self._hover_dots = False
+        self._pressed_row = -1
+        view = combo.view()
+        if view is not None:
+            view.setMouseTracking(True)
+            view.viewport().setMouseTracking(True)
+            view.viewport().installEventFilter(self)
+
+    @staticmethod
+    def dots_rect_for_item(item_rect: QRect) -> QRect:
+        btn_w, btn_h = 38, max(28, item_rect.height() - 8)
+        return QRect(
+            item_rect.right() - btn_w - 6,
+            item_rect.top() + (item_rect.height() - btn_h) // 2,
+            btn_w,
+            btn_h,
+        )
+
+    def paint(self, painter: QPainter, option, index):
+        painter.save()
+        rect = option.rect
+        text = str(index.data(Qt.DisplayRole) or "")
+        es_draft = text == self.DRAFT_LABEL
+        selected = bool(option.state & QStyle.State_Selected)
+        hovered = bool(option.state & QStyle.State_MouseOver) or (index.row() == self._hover_row)
+
+        if selected or hovered:
+            bg = QColor("#E0F2FE")
+            fg = QColor("#0369A1")
+        else:
+            bg = QColor("#FFFFFF")
+            fg = QColor(COLOR_TEXT_PRI)
+
+        painter.fillRect(rect, bg)
+        right_pad = 52 if not es_draft else 12
+        text_rect = QRect(
+            rect.left() + 12,
+            rect.top(),
+            max(20, rect.width() - right_pad - 12),
+            rect.height(),
+        )
+        f = QFont(option.font)
+        f.setPointSize(11)
+        f.setBold(True)
+        painter.setFont(f)
+        painter.setPen(fg)
+        elided = painter.fontMetrics().elidedText(text, Qt.ElideRight, text_rect.width())
+        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, elided)
+
+        if not es_draft:
+            drect = self.dots_rect_for_item(rect)
+            over_dots = self._hover_dots and (index.row() == self._hover_row)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setPen(QPen(QColor("#93C5FD") if over_dots else QColor("#CBD5E1"), 1.2))
+            painter.setBrush(QColor("#DBEAFE") if over_dots else QColor("#F8FAFC"))
+            painter.drawRoundedRect(drect, 7, 7)
+
+            dot_col = QColor(COLOR_BRAND_PRIMARY) if over_dots else QColor("#475569")
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(dot_col)
+            cx = drect.center().x()
+            cy = drect.center().y()
+            for dy in (-6, 0, 6):
+                painter.drawEllipse(QPointF(cx, cy + dy), 2.1, 2.1)
+
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        sz = super().sizeHint(option, index)
+        return QSize(sz.width(), max(46, sz.height()))
+
+    def _open_item_menu(self, recipe_name: str, global_pos):
+        menu = QMenu(self._combo)
+        menu.setStyleSheet(
+            f"QMenu {{ background-color: #FFFFFF; color: {COLOR_TEXT_PRI}; border: 1.5px solid {COLOR_BORDER}; "
+            "border-radius: 8px; padding: 6px; font-size: 13px; font-weight: 700; }"
+            "QMenu::item { padding: 10px 18px; border-radius: 6px; min-height: 24px; }"
+            "QMenu::item:selected { background-color: #E0F2FE; color: #0369A1; }"
+        )
+        act_copy = QAction("Copiar receta (todos los atributos)", menu)
+        act_copy.triggered.connect(lambda: self.copy_requested.emit(recipe_name))
+        menu.addAction(act_copy)
+
+        act_sel = QAction("Seleccionar para editar", menu)
+        act_sel.triggered.connect(lambda: self.select_requested.emit(recipe_name))
+        menu.addAction(act_sel)
+
+        menu.exec(global_pos)
+
+    def eventFilter(self, obj, event):
+        try:
+            view = self._combo.view() if self._combo is not None else None
+        except RuntimeError:
+            return False
+        if view is None or obj is not view.viewport():
+            return False
+        etype = event.type()
+        if etype in (QEvent.MouseMove, QEvent.HoverMove):
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            idx = view.indexAt(pos)
+            self._hover_row = idx.row() if idx.isValid() else -1
+            if idx.isValid() and str(idx.data(Qt.DisplayRole) or "") != self.DRAFT_LABEL:
+                self._hover_dots = self.dots_rect_for_item(view.visualRect(idx)).contains(pos)
+            else:
+                self._hover_dots = False
+            view.viewport().update()
+        elif etype == QEvent.Leave:
+            self._hover_row = -1
+            self._hover_dots = False
+            view.viewport().update()
+        elif etype == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            idx = view.indexAt(pos)
+            if idx.isValid():
+                nom = str(idx.data(Qt.DisplayRole) or "")
+                if nom != self.DRAFT_LABEL and self.dots_rect_for_item(view.visualRect(idx)).contains(pos):
+                    self._pressed_row = idx.row()
+                    return True
+            self._pressed_row = -1
+        elif etype == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            idx = view.indexAt(pos)
+            if self._pressed_row >= 0 and idx.isValid() and idx.row() == self._pressed_row:
+                nom = str(idx.data(Qt.DisplayRole) or "")
+                gpos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+                self._pressed_row = -1
+                if nom != self.DRAFT_LABEL and self.dots_rect_for_item(view.visualRect(idx)).contains(pos):
+                    self._combo.hidePopup()
+                    QTimer.singleShot(0, lambda n=nom, p=gpos: self._open_item_menu(n, p))
+                    return True
+            self._pressed_row = -1
+        return super().eventFilter(obj, event)
+
+
 KOSTAL_GLOBAL_QSS = f"""
 QMainWindow, QWidget#RootCentral {{
     background-color: {COLOR_BG_MAIN};
@@ -6456,6 +6603,10 @@ class KostalHmiWindow(QMainWindow):
 
         self.combo_admin_rec = QComboBox()
         self._aplicar_estilo_combo_receta(self.combo_admin_rec, min_height=54, min_width=360)
+        self.adm_rec_delegate = _AdminRecipeComboDelegate(self.combo_admin_rec, self)
+        self.adm_rec_delegate.copy_requested.connect(self._admin_copy_recipe)
+        self.adm_rec_delegate.select_requested.connect(self.combo_admin_rec.setCurrentText)
+        self.combo_admin_rec.setItemDelegate(self.adm_rec_delegate)
         self.combo_admin_rec.currentTextChanged.connect(self._on_admin_recipe_selected)
         top.addWidget(self.combo_admin_rec)
 
@@ -6605,6 +6756,28 @@ class KostalHmiWindow(QMainWindow):
         self.combo_admin_rec.blockSignals(False)
         self._on_admin_recipe_selected(self.combo_admin_rec.currentText())
 
+    def _populate_admin_recipe_fields(self, rec: dict, override_name: str = None):
+        """Rellena los campos del editor de Recetario desde un diccionario de receta."""
+        nom_val = override_name if override_name is not None else rec.get("nombre", "")
+        self.adm_rec_nombre.setText(nom_val)
+        self.adm_rec_pieza.setText(rec.get("pieza", ""))
+        self.adm_rec_modelo.setText(rec.get("modelo", ""))
+        f_val = max(1, min(5, int(rec.get("filas", 3))))
+        c_val = max(1, min(5, int(rec.get("columnas", rec.get("cols", 5)))))
+        cab_val = obtener_piezas_por_cabezal_receta(rec)
+        self._adm_prev_total_pz = f_val * c_val * cab_val
+        self.adm_rec_filas.setText(str(f_val))
+        self.adm_rec_cols.setText(str(c_val))
+        if hasattr(self, "adm_rec_pz_cabezal"):
+            self.adm_rec_pz_cabezal.setText(str(cab_val))
+        self.adm_rec_pz_jig.setText(str(obtener_piezas_por_jig_receta(rec)))
+        self.adm_rec_dx.setText(str(rec.get("espacio_x", rec.get("delta_x", 20.0))))
+        self.adm_rec_dy.setText(str(rec.get("espacio_y", rec.get("delta_y", 35.0))))
+        self.adm_rec_cx.setText(str(rec.get("cero_x", rec.get("cero_guardado_x", 0.0))))
+        self.adm_rec_cy.setText(str(rec.get("cero_y", rec.get("cero_guardado_y", 0.0))))
+        self.adm_rec_vel.setText(str(rec.get("vel_x", rec.get("velocidad", 100.0))))
+        self.adm_rec_img.setText(rec.get("imagen", "pieza_default.png"))
+
     def _on_admin_recipe_selected(self, nom):
         if nom == "— NUEVA RECETA (Sin guardar) —":
             return
@@ -6618,24 +6791,7 @@ class KostalHmiWindow(QMainWindow):
             self.combo_admin_rec.removeItem(idx_draft)
             self.combo_admin_rec.setCurrentText(nom)
             self.combo_admin_rec.blockSignals(False)
-        self.adm_rec_nombre.setText(rec.get("nombre", ""))
-        self.adm_rec_pieza.setText(rec.get("pieza", ""))
-        self.adm_rec_modelo.setText(rec.get("modelo", ""))
-        f_val = max(1, min(5, int(rec.get("filas", 3))))
-        c_val = max(1, min(5, int(rec.get("columnas", 5))))
-        cab_val = obtener_piezas_por_cabezal_receta(rec)
-        self._adm_prev_total_pz = f_val * c_val * cab_val
-        self.adm_rec_filas.setText(str(f_val))
-        self.adm_rec_cols.setText(str(c_val))
-        if hasattr(self, "adm_rec_pz_cabezal"):
-            self.adm_rec_pz_cabezal.setText(str(cab_val))
-        self.adm_rec_pz_jig.setText(str(obtener_piezas_por_jig_receta(rec)))
-        self.adm_rec_dx.setText(str(rec.get("espacio_x", 20.0)))
-        self.adm_rec_dy.setText(str(rec.get("espacio_y", 35.0)))
-        self.adm_rec_cx.setText(str(rec.get("cero_x", 0.0)))
-        self.adm_rec_cy.setText(str(rec.get("cero_y", 0.0)))
-        self.adm_rec_vel.setText(str(rec.get("vel_x", 100.0)))
-        self.adm_rec_img.setText(rec.get("imagen", "pieza_default.png"))
+        self._populate_admin_recipe_fields(rec)
         if hasattr(self, "lbl_adm_rec_prod_summary"):
             tot_r = max(0, int(rec.get("piezas_producidas_total", 0) or 0))
             nok_r = max(0, min(tot_r, int(rec.get("piezas_producidas_nok", 0) or 0)))
@@ -6646,6 +6802,35 @@ class KostalHmiWindow(QMainWindow):
                 f"Producción Acumulada de esta Receta:  Ciclos Completados: {cic_r}  |  "
                 f"Total: {tot_r} pz  |  OK: {ok_r} pz  |  NO OK: {nok_r} pz  |  Calidad: {cal_r:.1f}%"
             )
+
+    def _admin_copy_recipe(self, orig_nom: str):
+        """Crea un borrador de nueva receta copiando todos los atributos de una receta existente."""
+        recetas = self.config.get("recetas", [])
+        rec = next((r for r in recetas if r.get("nombre") == orig_nom), None)
+        if not rec:
+            return
+        base_nom = f"{orig_nom} (Copia)"
+        nombre_cand = base_nom
+        k = 2
+        while any(r.get("nombre") == nombre_cand for r in recetas):
+            nombre_cand = f"{orig_nom} (Copia {k})"
+            k += 1
+
+        self._adm_creating_new_recipe = True
+        self.combo_admin_rec.blockSignals(True)
+        draft_lbl = "— NUEVA RECETA (Sin guardar) —"
+        if self.combo_admin_rec.findText(draft_lbl) < 0:
+            self.combo_admin_rec.addItem(draft_lbl)
+        self.combo_admin_rec.setCurrentText(draft_lbl)
+        self.combo_admin_rec.blockSignals(False)
+
+        self._populate_admin_recipe_fields(rec, override_name=nombre_cand)
+        if hasattr(self, "lbl_adm_rec_prod_summary"):
+            self.lbl_adm_rec_prod_summary.setText(
+                f"Copia de '{orig_nom}': Modifique el Nombre o Pieza y presione [GUARDAR CAMBIOS EN RECETA Y ACTIVAR]."
+            )
+        self.adm_rec_nombre.setFocus()
+        self.adm_rec_nombre.selectAll()
 
     def _admin_browse_image(self):
         fn, _ = QFileDialog.getOpenFileName(
