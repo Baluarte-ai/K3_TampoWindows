@@ -2151,6 +2151,7 @@ class OpcUaWorker(QThread):
     telemetry_updated = Signal(dict)
     connection_Changed = Signal(bool, str)
     cycle_step_completed = Signal()
+    physical_paint_start_requested = Signal()
     splash_progress = Signal(int, str, bool, bool)  # pct, msg, finished, connected
 
     NODE_MAP = {
@@ -2215,6 +2216,7 @@ class OpcUaWorker(QThread):
             "SENSOR_X": False,
             "SENSOR_Y": False,
             "TAMPO": False,
+            "BTN_PINTAR": False,
             "POS_X": 0.0,
             "POS_Y": 0.0,
             "PINTAR": False,
@@ -2224,6 +2226,8 @@ class OpcUaWorker(QThread):
         }
         self._last_pintado = False
         self._last_pintado_edge_ts = 0.0
+        self._last_btn_pintar = False
+        self._last_btn_pintar_edge_ts = 0.0
         self._last_move_sent_ts = 0.0
         self._last_vel_sent = None
 
@@ -2292,6 +2296,9 @@ class OpcUaWorker(QThread):
                 cnode = obj.add_variable(idx, counter_key, 0)
                 cnode.set_writable()
                 self.server_nodes[counter_key] = cnode
+            btn_node = obj.add_variable(idx, "BTN_PINTAR", False)
+            btn_node.set_writable()
+            self.server_nodes["BTN_PINTAR"] = btn_node
             self.server.start()
             self.server_running = True
             log_debug_hmi(f"Servidor OPC UA Puerto 2 iniciado en {bind_ip}:{port}")
@@ -2345,11 +2352,13 @@ class OpcUaWorker(QThread):
             for key, suffix in self.NODE_MAP.items():
                 node_id = f"ns={ns};s={prefix}{suffix}"
                 self.nodes[key] = self.client.get_node(node_id)
-            for opt_key in ("NUEVA_POS", "M_PINTAR"):
+            for opt_key in ("NUEVA_POS", "M_PINTAR", "BTN_PINTAR"):
                 try:
                     opt_node = self.client.get_node(f"ns={ns};s={prefix}{opt_key}")
-                    opt_node.get_value()
+                    init_opt = opt_node.get_value()
                     self.optional_nodes[opt_key] = opt_node
+                    if opt_key == "BTN_PINTAR":
+                        self._last_btn_pintar = bool(init_opt)
                 except Exception:
                     pass
             self._last_vel_sent = None
@@ -2493,6 +2502,17 @@ class OpcUaWorker(QThread):
                 f"| Eco_PLC={'OK' if echo_ok else 'REINTENTO'} | Trigger={trig} | dt={dt_ms:.1f}ms"
             )
 
+    def _process_btn_pintar_edge(self, btn_now: bool, now: float):
+        """Detecta flanco ascendente (False -> True) en BTN_PINTAR para iniciar ciclo desde botón físico."""
+        if btn_now and not self._last_btn_pintar:
+            if (now - self._last_btn_pintar_edge_ts) >= 0.45:
+                self._last_btn_pintar_edge_ts = now
+                log_debug_hmi(
+                    "[PLC-BOTON] Flanco ascendente en BTN_PINTAR detectado -> Solicitando inicio de pintado."
+                )
+                self.physical_paint_start_requested.emit()
+        self._last_btn_pintar = bool(btn_now)
+
     def run(self):
         # Paso inicial de Splash Screen
         self.splash_progress.emit(15, "Cargando configuración persistente y recetas...", False, False)
@@ -2595,6 +2615,17 @@ class OpcUaWorker(QThread):
                             )
                         pintado_now = False
                     self._last_pintado = pintado_now
+
+                    btn_now = False
+                    if "BTN_PINTAR" in self.optional_nodes:
+                        try:
+                            btn_now = bool(self.optional_nodes["BTN_PINTAR"].get_value())
+                        except Exception:
+                            self.optional_nodes.pop("BTN_PINTAR", None)
+                            btn_now = False
+                    snap["BTN_PINTAR"] = btn_now
+                    self._process_btn_pintar_edge(btn_now, now)
+
                     self.telemetry_updated.emit(snap)
                 except Exception as e:
                     log_debug_hmi(f"Pérdida de enlace OPC UA durante lectura: {e}")
@@ -2607,6 +2638,13 @@ class OpcUaWorker(QThread):
                     if self._connect_plc():
                         self.connection_Changed.emit(True, "CONECTADO")
                 snap = dict(self.sim_state)
+                if self.server_running and "BTN_PINTAR" in self.server_nodes:
+                    try:
+                        srv_btn = bool(self.server_nodes["BTN_PINTAR"].get_value())
+                        snap["BTN_PINTAR"] = srv_btn or bool(snap.get("BTN_PINTAR", False))
+                    except Exception:
+                        pass
+                self._process_btn_pintar_edge(bool(snap.get("BTN_PINTAR", False)), now)
                 self.telemetry_updated.emit(snap)
 
             self.msleep(65)
@@ -3840,7 +3878,7 @@ class KostalHmiWindow(QMainWindow):
             "PINTADO": False, "M_ENE": False, "M_SET": False,
             "LISTO": False, "NO_LISTO": False, "ALARM_X": False,
             "ALARM_Y": False, "PE": False, "SENSOR_X": False,
-            "SENSOR_Y": False, "TAMPO": False,
+            "SENSOR_Y": False, "TAMPO": False, "BTN_PINTAR": False,
         }
         self.led_widgets = {}
 
@@ -3891,6 +3929,7 @@ class KostalHmiWindow(QMainWindow):
         self.opc_worker.connection_Changed.connect(self._on_plc_connection_Changed)
         self.opc_worker.telemetry_updated.connect(self._on_plc_telemetry)
         self.opc_worker.cycle_step_completed.connect(self._avanzar_siguiente_pieza_ciclo)
+        self.opc_worker.physical_paint_start_requested.connect(self._on_physical_paint_start)
         self.opc_worker.start()
 
     def resizeEvent(self, event):
@@ -4793,7 +4832,7 @@ class KostalHmiWindow(QMainWindow):
             ("PINTADO", "ok"), ("M_ENE", "ok"), ("M_SET", "ok"),
             ("LISTO", "ok"), ("NO_LISTO", "warn"), ("ALARM_X", "err"),
             ("ALARM_Y", "err"), ("PE", "err"), ("SENSOR_X", "info"),
-            ("SENSOR_Y", "info"), ("TAMPO", "info"),
+            ("SENSOR_Y", "info"), ("TAMPO", "info"), ("BTN_PINTAR", "info"),
         ]
         for idx, (sig_name, kind) in enumerate(signal_defs):
             r = idx // 6
@@ -5697,6 +5736,15 @@ class KostalHmiWindow(QMainWindow):
             )
             return False
         return True
+
+    @Slot()
+    def _on_physical_paint_start(self):
+        """Arranca el proceso de pintado al activarse el botón físico (variable OPC UA BTN_PINTAR)."""
+        if self.stack.currentIndex() in (0, 1):
+            return
+        if self.estado_pintando:
+            return
+        self.alternar_pintar()
 
     def alternar_pintar(self):
         if not self.estado_pintando:
