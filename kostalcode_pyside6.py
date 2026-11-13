@@ -450,6 +450,25 @@ def buscar_recurso(nombre_archivo):
     return None
 
 
+def _asegurar_iconos_flecha_dropdown():
+    """Garantiza la existencia física de los iconos PNG para las flechas de los QComboBox."""
+    try:
+        assets_dir = os.path.join(BASE_DIR, "Assets")
+        os.makedirs(assets_dir, exist_ok=True)
+        p1 = os.path.join(assets_dir, "arrow_down.png")
+        p2 = os.path.join(assets_dir, "arrow_down_hover.png")
+        if (not os.path.exists(p1) or not os.path.exists(p2)) and PIL_DISPONIBLE:
+            from PIL import ImageDraw
+            for path_ico, color_rgb in [(p1, (51, 65, 85, 255)), (p2, (2, 132, 199, 255))]:
+                if not os.path.exists(path_ico):
+                    im = PilImage.new("RGBA", (32, 32), (0, 0, 0, 0))
+                    dr = ImageDraw.Draw(im)
+                    dr.line([(9, 13), (16, 20), (23, 13)], fill=color_rgb, width=3, joint="curve")
+                    im.save(path_ico, "PNG")
+    except Exception as e:
+        log_debug_hmi(f"Aviso asegurando iconos de flecha dropdown: {e}")
+
+
 def cargar_logo_corporativo(nombre_archivo, max_ancho, max_alto):
     """Carga un logotipo corporativo (WebP/PNG/JPG) escalado con antialiasing y fallback PIL."""
     ruta = buscar_recurso(nombre_archivo)
@@ -3625,19 +3644,31 @@ class _AdminRecipeComboDelegate(QStyledItemDelegate):
         menu = QMenu(self._combo)
         menu.setStyleSheet(
             f"QMenu {{ background-color: #FFFFFF; color: {COLOR_TEXT_PRI}; border: 1.5px solid {COLOR_BORDER}; "
-            "border-radius: 8px; padding: 6px; font-size: 13px; font-weight: 700; }"
-            "QMenu::item { padding: 10px 18px; border-radius: 6px; min-height: 24px; }"
+            "border-radius: 9px; padding: 6px; font-size: 13px; font-weight: 700; }"
+            "QMenu::item { padding: 10px 18px; border-radius: 6px; min-height: 26px; }"
             "QMenu::item:selected { background-color: #E0F2FE; color: #0369A1; }"
+            "QMenu::item:disabled { color: #0A3866; background-color: #F1F5F9; font-weight: 900; border-radius: 6px; margin-bottom: 4px; padding: 8px 14px; }"
+            "QMenu::separator { height: 1px; background-color: #CBD5E1; margin: 4px 6px; }"
         )
-        act_copy = QAction("Copiar receta (todos los atributos)", menu)
+
+        act_hdr = QAction(f"📋 RECETA: {recipe_name}", menu)
+        act_hdr.setEnabled(False)
+        menu.addAction(act_hdr)
+        menu.addSeparator()
+
+        act_copy = QAction(f"📄 Copiar receta \"{recipe_name}\" (todos los atributos)", menu)
         act_copy.triggered.connect(lambda: self.copy_requested.emit(recipe_name))
         menu.addAction(act_copy)
 
-        act_sel = QAction("Seleccionar para editar", menu)
+        act_sel = QAction(f"✏️ Seleccionar \"{recipe_name}\" para editar", menu)
         act_sel.triggered.connect(lambda: self.select_requested.emit(recipe_name))
         menu.addAction(act_sel)
 
         menu.exec(global_pos)
+        try:
+            self._combo.hidePopup()
+        except Exception:
+            pass
 
     def eventFilter(self, obj, event):
         try:
@@ -3677,7 +3708,12 @@ class _AdminRecipeComboDelegate(QStyledItemDelegate):
                 gpos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
                 self._pressed_row = -1
                 if nom != self.DRAFT_LABEL and self.dots_rect_for_item(view.visualRect(idx)).contains(pos):
-                    self._combo.hidePopup()
+                    # Actualizar visualmente el texto del combobox para que el usuario
+                    # vea en el recuadro superior la receta que está copiando
+                    self._combo.blockSignals(True)
+                    self._combo.setCurrentIndex(idx.row())
+                    self._combo.blockSignals(False)
+                    # Abrir el menú inmediatamente manteniendo el dropdown visible
                     QTimer.singleShot(0, lambda n=nom, p=gpos: self._open_item_menu(n, p))
                     return True
             self._pressed_row = -1
@@ -3726,14 +3762,28 @@ QLineEdit, QComboBox {{
 QLineEdit:focus, QComboBox:focus {{
     border: 2px solid {COLOR_ACCENT_CYAN};
 }}
+QComboBox {{
+    padding-right: 30px;
+}}
 QComboBox::drop-down {{
     subcontrol-origin: padding;
     subcontrol-position: top right;
-    width: 24px;
+    width: 28px;
     border-left: 1px solid #E2E8F0;
     background-color: #F8FAFC;
     border-top-right-radius: 6px;
     border-bottom-right-radius: 6px;
+}}
+QComboBox::drop-down:hover {{
+    background-color: #F1F5F9;
+}}
+QComboBox::down-arrow {{
+    image: url("Assets/arrow_down.png");
+    width: 14px;
+    height: 14px;
+}}
+QComboBox::down-arrow:hover {{
+    image: url("Assets/arrow_down_hover.png");
 }}
 QComboBox QAbstractItemView {{
     background-color: #FFFFFF;
@@ -4443,9 +4493,12 @@ class KostalHmiWindow(QMainWindow):
         if min_width is not None:
             combo.setMinimumWidth(min_width)
         combo.setStyleSheet(
-            f"QComboBox {{ font-size: 14px; font-weight: 800; padding: 6px 12px; border: 1.5px solid {COLOR_BORDER}; border-radius: 7px; background-color: #FFFFFF; color: {COLOR_TEXT_PRI}; }}"
+            f"QComboBox {{ font-size: 14px; font-weight: 800; padding: 6px 44px 6px 14px; border: 1.5px solid {COLOR_BORDER}; border-radius: 7px; background-color: #FFFFFF; color: {COLOR_TEXT_PRI}; }}"
             f"QComboBox:focus {{ border: 2px solid {COLOR_ACCENT_CYAN}; }}"
-            "QComboBox::drop-down { width: 38px; border-left: 1px solid #CBD5E1; background-color: #F1F5F9; border-top-right-radius: 7px; border-bottom-right-radius: 7px; }"
+            "QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 38px; border-left: 1px solid #CBD5E1; background-color: #F1F5F9; border-top-right-radius: 7px; border-bottom-right-radius: 7px; }"
+            "QComboBox::drop-down:hover { background-color: #E2E8F0; }"
+            "QComboBox::down-arrow { image: url(\"Assets/arrow_down.png\"); width: 16px; height: 16px; }"
+            "QComboBox::down-arrow:hover { image: url(\"Assets/arrow_down_hover.png\"); }"
             f"QComboBox QAbstractItemView {{ font-size: 14px; font-weight: 700; padding: 6px; background-color: #FFFFFF; color: {COLOR_TEXT_PRI}; selection-background-color: #E0F2FE; selection-color: #0369A1; }}"
             "QComboBox QAbstractItemView::item { min-height: 44px; padding: 8px 12px; }"
         )
@@ -7861,6 +7914,7 @@ class KostalHmiWindow(QMainWindow):
 # PUNTO DE ENTRADA DE LA APLICACIÓN PYSIDE6
 # ==============================================================================
 def main():
+    _asegurar_iconos_flecha_dropdown()
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
