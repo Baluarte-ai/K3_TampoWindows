@@ -75,41 +75,53 @@ _estado_teclado_visible = False
 
 
 def abrir_teclado_tactil_windows(forzar=False):
-    """Abre automáticamente el teclado táctil o en pantalla de Windows sin bloquear la UI."""
+    """Abre de manera confiable el teclado nativo en pantalla de Windows sin bloquear la UI."""
     global _ultimo_teclado_ts, _estado_teclado_visible
     if os.name != "nt":
         return
     ahora = time.time()
-    if not forzar and (ahora - _ultimo_teclado_ts < 0.45):
+    if not forzar and (ahora - _ultimo_teclado_ts < 0.5):
         return
     _ultimo_teclado_ts = ahora
     _estado_teclado_visible = True
 
     def _async_launch():
+        # 1. Invocación mediante ShellExecuteW con osk.exe (garantizado en Windows 10/11)
         try:
-            rutas_tabtip = [
-                r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
-                r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
-            ]
-            for ruta in rutas_tabtip:
-                if os.path.exists(ruta):
-                    try:
-                        os.startfile(ruta)
-                        return
-                    except Exception:
-                        subprocess.Popen([ruta], shell=False)
-                        return
-            os.startfile("osk.exe")
+            import ctypes
+            res = ctypes.windll.shell32.ShellExecuteW(None, "open", "osk.exe", None, None, 1)
+            if int(res) > 32:
+                return
         except Exception:
+            pass
+
+        # 2. Rutas nativas directas de osk.exe evitando redirección de WOW64
+        windir = os.environ.get("WINDIR", r"C:\Windows")
+        rutas_osk = [
+            os.path.join(windir, "Sysnative", "osk.exe"),
+            os.path.join(windir, "System32", "osk.exe"),
+            "osk.exe",
+        ]
+        for ruta in rutas_osk:
             try:
-                subprocess.Popen(
-                    ["osk.exe"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
-                )
+                if os.path.exists(ruta) or ruta == "osk.exe":
+                    subprocess.Popen(
+                        [ruta],
+                        shell=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+                    )
+                    return
             except Exception:
-                pass
+                continue
+
+        # 3. Alternativa mediante ShellExecuteW para TabTip
+        try:
+            import ctypes
+            ctypes.windll.shell32.ShellExecuteW(None, "open", "tabtip.exe", None, None, 1)
+        except Exception:
+            pass
 
     threading.Thread(target=_async_launch, daemon=True).start()
 
@@ -138,12 +150,17 @@ def ocultar_teclado_tactil_windows(forzar=False):
 
 
 class _AutoTouchKeyboardFilter(QObject):
-    """Filtro global que despliega automáticamente el teclado al enfocar o tocar cualquier QLineEdit editable."""
+    """Filtro global que despliega automáticamente el teclado al enfocar o tocar cualquier campo de texto editable."""
     def eventFilter(self, obj, event):
-        if isinstance(obj, QLineEdit):
+        if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)):
             etype = event.type()
-            if etype in (QEvent.FocusIn, QEvent.MouseButtonPress, QEvent.TouchBegin):
-                if obj.isEnabled() and not obj.isReadOnly() and not getattr(obj, "_no_auto_keyboard", False):
+            if etype in (
+                QEvent.FocusIn,
+                QEvent.MouseButtonPress,
+                QEvent.MouseButtonRelease,
+                QEvent.TouchBegin,
+            ):
+                if obj.isEnabled() and not getattr(obj, "isReadOnly", lambda: False)() and not getattr(obj, "_no_auto_keyboard", False):
                     abrir_teclado_tactil_windows()
         return super().eventFilter(obj, event)
 
@@ -4351,118 +4368,152 @@ class KostalHmiWindow(QMainWindow):
         # ---------------- HEADER SUPERIOR ----------------
         header = QFrame()
         header.setObjectName("HeaderBar")
-        header.setFixedHeight(54)
+        header.setFixedHeight(50)
         hlay = QHBoxLayout(header)
-        hlay.setContentsMargins(14, 6, 14, 6)
-        hlay.setSpacing(10)
+        hlay.setContentsMargins(10, 4, 10, 4)
+        hlay.setSpacing(6)
 
-        pix_kostal_hdr = cargar_logo_corporativo("LogoKostal.webp", 145, 28)
+        # Bloque Izquierdo: Logos y Estación
+        left_box = QWidget()
+        left_lay = QHBoxLayout(left_box)
+        left_lay.setContentsMargins(0, 0, 0, 0)
+        left_lay.setSpacing(6)
+
+        pix_kostal_hdr = cargar_logo_corporativo("LogoKostal.webp", 120, 24)
         lbl_logo = QLabel()
         if pix_kostal_hdr:
             lbl_logo.setPixmap(pix_kostal_hdr)
         else:
             lbl_logo.setText("KOSTAL")
-            lbl_logo.setStyleSheet("color: #FFFFFF; font-size: 22px; font-weight: 900; letter-spacing: 2px;")
-        hlay.addWidget(lbl_logo)
+            lbl_logo.setStyleSheet("color: #FFFFFF; font-size: 18px; font-weight: 900; letter-spacing: 1px;")
+        left_lay.addWidget(lbl_logo)
 
         self.lbl_header_estacion = QLabel(self.config.get("estacion_nombre", "EST-KOSTAL-04"))
         self.lbl_header_estacion.setStyleSheet(
-            "background-color: #1E293B; color: #38BDF8; font-size: 11px; font-weight: 800; "
-            "padding: 4px 8px; border-radius: 5px;"
+            "background-color: #1E293B; color: #38BDF8; font-size: 10px; font-weight: 800; "
+            "padding: 3px 6px; border-radius: 4px;"
         )
-        hlay.addWidget(self.lbl_header_estacion)
+        left_lay.addWidget(self.lbl_header_estacion)
 
-        pix_bal_hdr = cargar_logo_corporativo("LOGO_BALUARTE.png", 130, 32)
+        pix_bal_hdr = cargar_logo_corporativo("LOGO_BALUARTE.png", 95, 24)
         if pix_bal_hdr:
             bal_badge = QFrame()
-            bal_badge.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
+            bal_badge.setStyleSheet("background-color: #FFFFFF; border-radius: 4px;")
             bal_lay = QHBoxLayout(bal_badge)
-            bal_lay.setContentsMargins(8, 2, 8, 2)
+            bal_lay.setContentsMargins(6, 2, 6, 2)
             lbl_bal_hdr = QLabel()
             lbl_bal_hdr.setPixmap(pix_bal_hdr)
             bal_lay.addWidget(lbl_bal_hdr)
-            hlay.addWidget(bal_badge)
+            left_lay.addWidget(bal_badge)
+
+        hlay.addWidget(left_box, 0)
 
         hlay.addStretch(1)
 
-        # Banner de Estado General Central
+        # Banner de Estado General Central (ancho elástico y controlado)
         self.lbl_banner_estado = QLabel("SISTEMA LISTO PARA OPERAR")
         self.lbl_banner_estado.setAlignment(Qt.AlignCenter)
-        self.lbl_banner_estado.setMinimumWidth(340)
-        self.lbl_banner_estado.setFixedHeight(36)
+        self.lbl_banner_estado.setMinimumWidth(150)
+        self.lbl_banner_estado.setMaximumWidth(240)
+        self.lbl_banner_estado.setFixedHeight(30)
+        self.lbl_banner_estado.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.lbl_banner_estado.setStyleSheet(
-            f"background-color: {COLOR_OK}; color: #FFFFFF; font-size: 12px; font-weight: 900; "
-            "padding: 0 16px; border-radius: 7px;"
+            f"background-color: {COLOR_OK}; color: #FFFFFF; font-size: 11px; font-weight: 800; "
+            "padding: 0 10px; border-radius: 6px;"
         )
-        hlay.addWidget(self.lbl_banner_estado)
+        hlay.addWidget(self.lbl_banner_estado, 0)
 
         hlay.addStretch(1)
 
-        # Info de Usuario y Rol
+        # Bloque Derecho: Usuario, Selector de Idioma, Teclado y Controles
+        right_box = QWidget()
+        right_lay = QHBoxLayout(right_box)
+        right_lay.setContentsMargins(0, 0, 0, 0)
+        right_lay.setSpacing(5)
+
+        user_card = QFrame()
+        user_card.setStyleSheet("background-color: #1E293B; border-radius: 5px;")
+        uc_lay = QHBoxLayout(user_card)
+        uc_lay.setContentsMargins(6, 2, 6, 2)
+        uc_lay.setSpacing(6)
+
         self.lbl_header_user = QLabel("USUARIO: Juan Pérez")
-        self.lbl_header_user.setStyleSheet("color: #F8FAFC; font-size: 12px; font-weight: 800;")
-        hlay.addWidget(self.lbl_header_user)
+        self.lbl_header_user.setStyleSheet("color: #F8FAFC; font-size: 11px; font-weight: 800;")
+        uc_lay.addWidget(self.lbl_header_user)
 
         self.lbl_header_rol = QLabel("OPERADOR")
         self.lbl_header_rol.setStyleSheet(
-            "background-color: #0284C7; color: #FFFFFF; font-size: 10px; font-weight: 800; "
-            "padding: 3px 7px; border-radius: 4px;"
+            "background-color: #0284C7; color: #FFFFFF; font-size: 9px; font-weight: 800; "
+            "padding: 2px 6px; border-radius: 3px;"
         )
-        hlay.addWidget(self.lbl_header_rol)
+        uc_lay.addWidget(self.lbl_header_rol)
+        right_lay.addWidget(user_card)
 
         self.btn_header_admin = QPushButton("Panel Admin")
-        self.btn_header_admin.setFixedHeight(32)
+        self.btn_header_admin.setFixedHeight(30)
         self.btn_header_admin.setStyleSheet(
-            "background-color: #7C3AED; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
+            "background-color: #7C3AED; color: white; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
         )
         self.btn_header_admin.clicked.connect(self._open_admin_panel)
-        hlay.addWidget(self.btn_header_admin)
+        right_lay.addWidget(self.btn_header_admin)
 
         # Selector de idioma [ES | EN]
         lang_box = QFrame()
-        lang_box.setStyleSheet("background-color: #1E293B; border-radius: 6px;")
+        lang_box.setStyleSheet("background-color: #1E293B; border-radius: 5px;")
         llay = QHBoxLayout(lang_box)
-        llay.setContentsMargins(3, 2, 3, 2)
+        llay.setContentsMargins(2, 2, 2, 2)
         llay.setSpacing(2)
 
         self.btn_lang_es = QPushButton("ES")
-        self.btn_lang_es.setFixedSize(32, 26)
+        self.btn_lang_es.setFixedSize(26, 24)
         self.btn_lang_es.clicked.connect(lambda: self.cambiar_idioma("ES"))
         llay.addWidget(self.btn_lang_es)
 
         self.btn_lang_en = QPushButton("EN")
-        self.btn_lang_en.setFixedSize(32, 26)
+        self.btn_lang_en.setFixedSize(26, 24)
         self.btn_lang_en.clicked.connect(lambda: self.cambiar_idioma("EN"))
         llay.addWidget(self.btn_lang_en)
-        hlay.addWidget(lang_box)
+        right_lay.addWidget(lang_box)
 
         self.lbl_header_timer = QLabel("00:00:00")
-        self.lbl_header_timer.setStyleSheet("color: #94A3B8; font-family: Consolas; font-size: 12px; font-weight: 700;")
-        hlay.addWidget(self.lbl_header_timer)
+        self.lbl_header_timer.setStyleSheet("color: #94A3B8; font-family: Consolas; font-size: 11px; font-weight: 700;")
+        right_lay.addWidget(self.lbl_header_timer)
+
+        # Botón para invocar teclado en pantalla nativo
+        self.btn_header_kb = QPushButton("Teclado")
+        self.btn_header_kb.setFixedHeight(30)
+        self.btn_header_kb.setToolTip("Abrir teclado en pantalla nativo de Windows")
+        self.btn_header_kb.setStyleSheet(
+            "background-color: #1E293B; color: #38BDF8; font-size: 10px; font-weight: 800; padding: 0 6px; border-radius: 5px;"
+        )
+        self.btn_header_kb.clicked.connect(lambda: abrir_teclado_tactil_windows(forzar=True))
+        right_lay.addWidget(self.btn_header_kb)
 
         self.btn_header_logout = QPushButton("Cerrar Sesión")
-        self.btn_header_logout.setFixedHeight(32)
+        self.btn_header_logout.setFixedHeight(30)
         self.btn_header_logout.setStyleSheet(
-            "background-color: #334155; color: #F8FAFC; font-size: 11px; font-weight: 700; padding: 0 10px; border-radius: 6px;"
+            "background-color: #334155; color: #F8FAFC; font-size: 10px; font-weight: 700; padding: 0 8px; border-radius: 5px;"
         )
         self.btn_header_logout.clicked.connect(self._cerrar_sesion)
-        hlay.addWidget(self.btn_header_logout)
+        right_lay.addWidget(self.btn_header_logout)
 
         self.btn_header_fs = QPushButton("Pantalla Completa")
-        self.btn_header_fs.setFixedHeight(32)
+        self.btn_header_fs.setFixedHeight(30)
         self.btn_header_fs.setStyleSheet(
-            "background-color: #1E293B; color: #E2E8F0; font-size: 11px; font-weight: 700; padding: 0 8px; border-radius: 6px;"
+            "background-color: #1E293B; color: #E2E8F0; font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 5px;"
         )
         self.btn_header_fs.clicked.connect(self.alternar_pantalla_completa)
-        hlay.addWidget(self.btn_header_fs)
+        right_lay.addWidget(self.btn_header_fs)
 
         self.btn_header_min = QPushButton("Minimizar")
-        self.btn_header_min.setFixedHeight(32)
+        self.btn_header_min.setFixedHeight(30)
         self.btn_header_min.setStyleSheet(
-            "background-color: #1E293B; color: #E2E8F0; font-size: 11px; font-weight: 700; padding: 0 8px; border-radius: 6px;"
+            "background-color: #1E293B; color: #E2E8F0; font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 5px;"
         )
         self.btn_header_min.clicked.connect(self.showMinimized)
-        hlay.addWidget(self.btn_header_min)
+        right_lay.addWidget(self.btn_header_min)
+
+        hlay.addWidget(right_box, 0)
 
         root.addWidget(header)
 
@@ -5425,6 +5476,8 @@ class KostalHmiWindow(QMainWindow):
         self.btn_header_logout.setText(self._tr("cerrar_sesion"))
         self.btn_header_fs.setText(self._tr("salir_pantalla") if self.isFullScreen() else self._tr("pantalla"))
         self.btn_header_min.setText(self._tr("minimizar"))
+        if hasattr(self, "btn_header_kb"):
+            self.btn_header_kb.setText("Teclado" if self.idioma == "ES" else "Keyboard")
 
         self.lbl_title_info_proc.setText(self._tr("info_proceso"))
         self.lbl_rec_activa_title.setText(self._tr("receta_activa"))
@@ -5660,7 +5713,7 @@ class KostalHmiWindow(QMainWindow):
             )
             self.lbl_banner_estado.setText(self._tr("paro_emergencia"))
             self.lbl_banner_estado.setStyleSheet(
-                f"background-color: {COLOR_ERR}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
+                f"background-color: {COLOR_ERR}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
             )
         else:
             self.btn_paro.setText(self._tr("paro"))
@@ -5670,27 +5723,27 @@ class KostalHmiWindow(QMainWindow):
             if self.paro_requiere_reset:
                 self.lbl_banner_estado.setText(self._tr("req_reset"))
                 self.lbl_banner_estado.setStyleSheet(
-                    f"background-color: {COLOR_WARN}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
+                    f"background-color: {COLOR_WARN}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
                 )
             elif self.paro_requiere_inicio:
                 self.lbl_banner_estado.setText(self._tr("req_inicio"))
                 self.lbl_banner_estado.setStyleSheet(
-                    f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
+                    f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
                 )
             elif self.estado_pintando:
                 self.lbl_banner_estado.setText(self._tr("en_proceso"))
                 self.lbl_banner_estado.setStyleSheet(
-                    f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
+                    f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
                 )
             elif self.estado_manual:
                 self.lbl_banner_estado.setText(self._tr("modo_man_act"))
                 self.lbl_banner_estado.setStyleSheet(
-                    f"background-color: {COLOR_WARN}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
+                    f"background-color: {COLOR_WARN}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
                 )
             else:
                 self.lbl_banner_estado.setText(self._tr("sistema_listo"))
                 self.lbl_banner_estado.setStyleSheet(
-                    f"background-color: {COLOR_OK}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
+                    f"background-color: {COLOR_OK}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
                 )
 
         # Actualizar Lienzo de 60 FPS
