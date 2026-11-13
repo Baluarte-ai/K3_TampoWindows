@@ -3651,16 +3651,16 @@ class _AdminRecipeComboDelegate(QStyledItemDelegate):
             "QMenu::separator { height: 1px; background-color: #CBD5E1; margin: 4px 6px; }"
         )
 
-        act_hdr = QAction(f"📋 RECETA: {recipe_name}", menu)
+        act_hdr = QAction(f"RECETA: {recipe_name}", menu)
         act_hdr.setEnabled(False)
         menu.addAction(act_hdr)
         menu.addSeparator()
 
-        act_copy = QAction(f"📄 Copiar receta \"{recipe_name}\" (todos los atributos)", menu)
+        act_copy = QAction(f"Copiar receta \"{recipe_name}\" (todos los atributos)", menu)
         act_copy.triggered.connect(lambda: self.copy_requested.emit(recipe_name))
         menu.addAction(act_copy)
 
-        act_sel = QAction(f"✏️ Seleccionar \"{recipe_name}\" para editar", menu)
+        act_sel = QAction(f"Seleccionar \"{recipe_name}\" para editar", menu)
         act_sel.triggered.connect(lambda: self.select_requested.emit(recipe_name))
         menu.addAction(act_sel)
 
@@ -6779,7 +6779,7 @@ class KostalHmiWindow(QMainWindow):
         self.adm_rec_img.setMinimumHeight(40)
         img_input_lay.addWidget(self.adm_rec_img, 1)
 
-        btn_browse_inline = QPushButton("📁 Buscar Foto...")
+        btn_browse_inline = QPushButton("Examinar Foto...")
         btn_browse_inline.setMinimumHeight(40)
         btn_browse_inline.setStyleSheet(
             f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 12px; font-weight: 800; padding: 0 14px; border-radius: 6px;"
@@ -7410,7 +7410,7 @@ class KostalHmiWindow(QMainWindow):
         flay.setSpacing(8)
 
         f_hdr = QHBoxLayout()
-        lbl_flt_title = QLabel("🔍 FILTROS DE CONSULTA Y TRAZABILIDAD:")
+        lbl_flt_title = QLabel("FILTROS DE CONSULTA Y TRAZABILIDAD:")
         lbl_flt_title.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 13px; font-weight: 900;")
         f_hdr.addWidget(lbl_flt_title)
         f_hdr.addStretch(1)
@@ -7419,7 +7419,7 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_flt_resumen.setStyleSheet("color: #64748B; font-size: 12px; font-weight: 700;")
         f_hdr.addWidget(self.lbl_flt_resumen)
 
-        btn_clear_filters = QPushButton("🔄 Limpiar Filtros")
+        btn_clear_filters = QPushButton("Limpiar Filtros")
         btn_clear_filters.setMinimumHeight(34)
         btn_clear_filters.setMinimumWidth(130)
         btn_clear_filters.setStyleSheet(
@@ -7565,7 +7565,7 @@ class KostalHmiWindow(QMainWindow):
         sel_fecha = self.combo_flt_fecha.currentText()
         self.combo_flt_fecha.blockSignals(True)
         self.combo_flt_fecha.clear()
-        self.combo_flt_fecha.addItem("📅 Todas las Fechas")
+        self.combo_flt_fecha.addItem("Todas las Fechas")
         if hoy_str not in fechas_ordenadas:
             self.combo_flt_fecha.addItem(f"Hoy ({hoy_str})")
         for f in fechas_ordenadas:
@@ -7579,10 +7579,10 @@ class KostalHmiWindow(QMainWindow):
         # 2. Horas y Turnos
         if self.combo_flt_hora.count() == 0:
             self.combo_flt_hora.blockSignals(True)
-            self.combo_flt_hora.addItem("⏰ Todas las Horas / Turnos")
-            self.combo_flt_hora.addItem("🌅 Turno 1 (06:00 - 14:00)")
-            self.combo_flt_hora.addItem("☀️ Turno 2 (14:00 - 22:00)")
-            self.combo_flt_hora.addItem("🌙 Turno 3 (22:00 - 06:00)")
+            self.combo_flt_hora.addItem("Todas las Horas / Turnos")
+            self.combo_flt_hora.addItem("Turno 1 (06:00 - 14:00)")
+            self.combo_flt_hora.addItem("Turno 2 (14:00 - 22:00)")
+            self.combo_flt_hora.addItem("Turno 3 (22:00 - 06:00)")
             for h in range(6, 24):
                 self.combo_flt_hora.addItem(f"Hora {h:02d}:00")
             for h in range(0, 6):
@@ -7594,7 +7594,7 @@ class KostalHmiWindow(QMainWindow):
         prod_emp = _normalizar_produccion_por_empleado(self.config)
         self.combo_flt_empleado.blockSignals(True)
         self.combo_flt_empleado.clear()
-        self.combo_flt_empleado.addItem("👤 Todos los Colaboradores")
+        self.combo_flt_empleado.addItem("Todos los Colaboradores")
         for e in sorted(prod_emp.values(), key=lambda x: str(x.get("nombre", "")).lower()):
             num = str(e.get("num_empleado", "-"))
             nom = str(e.get("nombre", "-"))
@@ -7944,7 +7944,9 @@ class KostalHmiWindow(QMainWindow):
         hdr_u.addStretch(1)
 
         self._admin_users_pass_visible_all = False
-        self.btn_toggle_all_passwords = QPushButton("👁️ Mostrar Todas las Contraseñas")
+        self.btn_toggle_all_passwords = QPushButton("Mostrar Todas las Contraseñas")
+        self.btn_toggle_all_passwords.setIcon(crear_icono_ojo(False))
+        self.btn_toggle_all_passwords.setIconSize(QSize(18, 18))
         self.btn_toggle_all_passwords.setMinimumHeight(38)
         self.btn_toggle_all_passwords.setStyleSheet(
             f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 12px; font-weight: 800; border-radius: 6px; padding: 0 14px;"
@@ -8114,12 +8116,14 @@ class KostalHmiWindow(QMainWindow):
             if w and hasattr(w, "_visible") and w._visible != self._admin_users_pass_visible_all:
                 w._btn.click()
         if self._admin_users_pass_visible_all:
-            self.btn_toggle_all_passwords.setText("🙈 Ocultar Todas las Contraseñas")
+            self.btn_toggle_all_passwords.setText("Ocultar Todas las Contraseñas")
+            self.btn_toggle_all_passwords.setIcon(crear_icono_ojo(True))
             self.btn_toggle_all_passwords.setStyleSheet(
                 "background-color: #0284C7; color: white; font-size: 12px; font-weight: 800; border-radius: 6px; padding: 0 14px;"
             )
         else:
-            self.btn_toggle_all_passwords.setText("👁️ Mostrar Todas las Contraseñas")
+            self.btn_toggle_all_passwords.setText("Mostrar Todas las Contraseñas")
+            self.btn_toggle_all_passwords.setIcon(crear_icono_ojo(False))
             self.btn_toggle_all_passwords.setStyleSheet(
                 f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 12px; font-weight: 800; border-radius: 6px; padding: 0 14px;"
             )
