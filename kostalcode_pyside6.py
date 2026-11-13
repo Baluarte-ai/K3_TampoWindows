@@ -41,7 +41,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QLineEdit, QComboBox, QFrame, QStackedWidget,
+    QLabel, QPushButton, QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox,
+    QSpinBox, QDoubleSpinBox, QComboBox, QFrame, QStackedWidget,
     QScrollArea, QSizePolicy, QFileDialog, QTableWidget, QTableWidgetItem,
     QHeaderView, QProgressBar, QAbstractItemView, QListView,
     QStyledItemDelegate, QStyle, QMenu
@@ -152,16 +153,19 @@ def ocultar_teclado_tactil_windows(forzar=False):
 class _AutoTouchKeyboardFilter(QObject):
     """Filtro global que despliega automáticamente el teclado al enfocar o tocar cualquier campo de texto editable."""
     def eventFilter(self, obj, event):
-        if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)):
-            etype = event.type()
-            if etype in (
-                QEvent.FocusIn,
-                QEvent.MouseButtonPress,
-                QEvent.MouseButtonRelease,
-                QEvent.TouchBegin,
-            ):
-                if obj.isEnabled() and not getattr(obj, "isReadOnly", lambda: False)() and not getattr(obj, "_no_auto_keyboard", False):
-                    abrir_teclado_tactil_windows()
+        try:
+            if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)):
+                etype = event.type()
+                if etype in (
+                    QEvent.FocusIn,
+                    QEvent.MouseButtonPress,
+                    QEvent.MouseButtonRelease,
+                    QEvent.TouchBegin,
+                ):
+                    if obj.isEnabled() and not getattr(obj, "isReadOnly", lambda: False)() and not getattr(obj, "_no_auto_keyboard", False):
+                        abrir_teclado_tactil_windows()
+        except Exception:
+            pass
         return super().eventFilter(obj, event)
 
 
