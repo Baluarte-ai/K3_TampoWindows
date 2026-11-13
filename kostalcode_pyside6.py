@@ -7399,6 +7399,95 @@ class KostalHmiWindow(QMainWindow):
         db_lay.addWidget(lbl_xl_path)
         lay.addWidget(db_info_banner)
 
+        # Panel de Filtros Dinámicos (Fecha, Hora/Turno y Colaborador)
+        filter_box = QFrame()
+        filter_box.setObjectName("SubSurface")
+        filter_box.setStyleSheet(
+            f"QFrame#SubSurface {{ background-color: #F8FAFC; border: 1.5px solid {COLOR_BORDER}; border-radius: 8px; }}"
+        )
+        flay = QVBoxLayout(filter_box)
+        flay.setContentsMargins(12, 10, 12, 10)
+        flay.setSpacing(8)
+
+        f_hdr = QHBoxLayout()
+        lbl_flt_title = QLabel("🔍 FILTROS DE CONSULTA Y TRAZABILIDAD:")
+        lbl_flt_title.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 13px; font-weight: 900;")
+        f_hdr.addWidget(lbl_flt_title)
+        f_hdr.addStretch(1)
+
+        self.lbl_flt_resumen = QLabel("Mostrando todos los registros")
+        self.lbl_flt_resumen.setStyleSheet("color: #64748B; font-size: 12px; font-weight: 700;")
+        f_hdr.addWidget(self.lbl_flt_resumen)
+
+        btn_clear_filters = QPushButton("🔄 Limpiar Filtros")
+        btn_clear_filters.setMinimumHeight(34)
+        btn_clear_filters.setMinimumWidth(130)
+        btn_clear_filters.setStyleSheet(
+            f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 12px; font-weight: 800; border-radius: 6px; padding: 0 12px;"
+        )
+        btn_clear_filters.clicked.connect(self._limpiar_filtros_stats)
+        f_hdr.addWidget(btn_clear_filters)
+        flay.addLayout(f_hdr)
+
+        f_row = QHBoxLayout()
+        f_row.setSpacing(12)
+
+        # 1. Filtro Fecha
+        f_date_col = QVBoxLayout()
+        f_date_col.setSpacing(4)
+        l_date = QLabel("Filtrar por Fecha:")
+        l_date.setStyleSheet("font-size: 11px; font-weight: 800; color: #475569;")
+        f_date_col.addWidget(l_date)
+        self.combo_flt_fecha = QComboBox()
+        self.combo_flt_fecha.setMinimumHeight(38)
+        self.combo_flt_fecha.currentIndexChanged.connect(lambda _i: self._aplicar_filtros_stats())
+        f_date_col.addWidget(self.combo_flt_fecha)
+        f_row.addLayout(f_date_col, 3)
+
+        # 2. Filtro Hora / Turno
+        f_time_col = QVBoxLayout()
+        f_time_col.setSpacing(4)
+        l_time = QLabel("Filtrar por Hora / Turno:")
+        l_time.setStyleSheet("font-size: 11px; font-weight: 800; color: #475569;")
+        f_time_col.addWidget(l_time)
+        self.combo_flt_hora = QComboBox()
+        self.combo_flt_hora.setMinimumHeight(38)
+        self.combo_flt_hora.currentIndexChanged.connect(lambda _i: self._aplicar_filtros_stats())
+        f_time_col.addWidget(self.combo_flt_hora)
+        f_row.addLayout(f_time_col, 3)
+
+        # 3. Filtro Tipo de Colaborador (Rol)
+        f_rol_col = QVBoxLayout()
+        f_rol_col.setSpacing(4)
+        l_rol = QLabel("Tipo de Colaborador:")
+        l_rol.setStyleSheet("font-size: 11px; font-weight: 800; color: #475569;")
+        f_rol_col.addWidget(l_rol)
+        self.combo_flt_rol = QComboBox()
+        self.combo_flt_rol.setMinimumHeight(38)
+        self.combo_flt_rol.addItems([
+            "Todos los Tipos (OPERADOR + ADMIN)",
+            "Solo OPERADORES",
+            "Solo ADMINISTRADORES"
+        ])
+        self.combo_flt_rol.currentIndexChanged.connect(lambda _i: self._aplicar_filtros_stats())
+        f_rol_col.addWidget(self.combo_flt_rol)
+        f_row.addLayout(f_rol_col, 3)
+
+        # 4. Filtro Colaborador Específico
+        f_emp_col = QVBoxLayout()
+        f_emp_col.setSpacing(4)
+        l_emp = QLabel("Colaborador Específico:")
+        l_emp.setStyleSheet("font-size: 11px; font-weight: 800; color: #475569;")
+        f_emp_col.addWidget(l_emp)
+        self.combo_flt_empleado = QComboBox()
+        self.combo_flt_empleado.setMinimumHeight(38)
+        self.combo_flt_empleado.currentIndexChanged.connect(lambda _i: self._aplicar_filtros_stats())
+        f_emp_col.addWidget(self.combo_flt_empleado)
+        f_row.addLayout(f_emp_col, 3)
+
+        flay.addLayout(f_row)
+        lay.addWidget(filter_box)
+
         self.lbl_stats_general_resumen = QLabel(
             "REGISTRO GENERAL DE PIEZAS (SOLO ADMIN):  Total: 0  |  OK: 0  |  NO OK: 0  |  Calidad: 100.0%"
         )
@@ -7458,15 +7547,272 @@ class KostalHmiWindow(QMainWindow):
                 "info",
             )
 
-    def _refresh_admin_stats_table(self):
-        if hasattr(self, "lbl_stats_general_resumen"):
-            ok_g = max(0, self.produccion_total - self.produccion_nok)
-            cal_g = f"{(ok_g / self.produccion_total * 100.0):.1f}%" if self.produccion_total > 0 else "100.0%"
-            self.lbl_stats_general_resumen.setText(
-                f"REGISTRO GENERAL DE PIEZAS (SOLO ADMIN):  "
-                f"Total: {self.produccion_total}  |  OK: {ok_g}  |  NO OK: {self.produccion_nok}  |  Calidad: {cal_g}"
-            )
+    def _poblar_opciones_filtros_stats(self):
+        if not hasattr(self, "combo_flt_fecha"):
+            return
 
+        # 1. Fechas disponibles
+        hist = self.config.get("historial_horas", [])
+        fechas_set = set()
+        for it in hist:
+            f_str = str(it.get("fecha", ""))[:10].strip()
+            if len(f_str) == 10 and f_str.count("-") == 2:
+                fechas_set.add(f_str)
+
+        hoy_str = datetime.date.today().strftime("%Y-%m-%d")
+        fechas_ordenadas = sorted(list(fechas_set), reverse=True)
+
+        sel_fecha = self.combo_flt_fecha.currentText()
+        self.combo_flt_fecha.blockSignals(True)
+        self.combo_flt_fecha.clear()
+        self.combo_flt_fecha.addItem("📅 Todas las Fechas")
+        if hoy_str not in fechas_ordenadas:
+            self.combo_flt_fecha.addItem(f"Hoy ({hoy_str})")
+        for f in fechas_ordenadas:
+            lbl_f = f"Hoy ({f})" if f == hoy_str else f
+            self.combo_flt_fecha.addItem(lbl_f)
+        idx_f = self.combo_flt_fecha.findText(sel_fecha)
+        if idx_f >= 0:
+            self.combo_flt_fecha.setCurrentIndex(idx_f)
+        self.combo_flt_fecha.blockSignals(False)
+
+        # 2. Horas y Turnos
+        if self.combo_flt_hora.count() == 0:
+            self.combo_flt_hora.blockSignals(True)
+            self.combo_flt_hora.addItem("⏰ Todas las Horas / Turnos")
+            self.combo_flt_hora.addItem("🌅 Turno 1 (06:00 - 14:00)")
+            self.combo_flt_hora.addItem("☀️ Turno 2 (14:00 - 22:00)")
+            self.combo_flt_hora.addItem("🌙 Turno 3 (22:00 - 06:00)")
+            for h in range(6, 24):
+                self.combo_flt_hora.addItem(f"Hora {h:02d}:00")
+            for h in range(0, 6):
+                self.combo_flt_hora.addItem(f"Hora {h:02d}:00")
+            self.combo_flt_hora.blockSignals(False)
+
+        # 3. Colaboradores específicos
+        sel_emp = self.combo_flt_empleado.currentText()
+        prod_emp = _normalizar_produccion_por_empleado(self.config)
+        self.combo_flt_empleado.blockSignals(True)
+        self.combo_flt_empleado.clear()
+        self.combo_flt_empleado.addItem("👤 Todos los Colaboradores")
+        for e in sorted(prod_emp.values(), key=lambda x: str(x.get("nombre", "")).lower()):
+            num = str(e.get("num_empleado", "-"))
+            nom = str(e.get("nombre", "-"))
+            rol = str(e.get("rol", "OPERADOR"))
+            self.combo_flt_empleado.addItem(f"{nom} ({num}) - {rol}")
+        idx_e = self.combo_flt_empleado.findText(sel_emp)
+        if idx_e >= 0:
+            self.combo_flt_empleado.setCurrentIndex(idx_e)
+        self.combo_flt_empleado.blockSignals(False)
+
+    def _limpiar_filtros_stats(self):
+        if hasattr(self, "combo_flt_fecha"):
+            self.combo_flt_fecha.setCurrentIndex(0)
+        if hasattr(self, "combo_flt_hora"):
+            self.combo_flt_hora.setCurrentIndex(0)
+        if hasattr(self, "combo_flt_rol"):
+            self.combo_flt_rol.setCurrentIndex(0)
+        if hasattr(self, "combo_flt_empleado"):
+            self.combo_flt_empleado.setCurrentIndex(0)
+        self._aplicar_filtros_stats()
+
+    def _aplicar_filtros_stats(self):
+        if not hasattr(self, "tbl_stats") or not hasattr(self, "combo_flt_fecha"):
+            return
+
+        filtro_fecha = self.combo_flt_fecha.currentText()
+        filtro_hora = self.combo_flt_hora.currentText()
+        filtro_rol = self.combo_flt_rol.currentText()
+        filtro_emp = self.combo_flt_empleado.currentText()
+
+        # Extraer fecha limpia (YYYY-MM-DD)
+        target_fecha = None
+        if "Todas" not in filtro_fecha:
+            if "(" in filtro_fecha and ")" in filtro_fecha:
+                target_fecha = filtro_fecha.split("(")[1].split(")")[0].strip()
+            else:
+                target_fecha = filtro_fecha.strip()
+
+        # Determinar rol objetivo
+        target_rol = None
+        if "OPERADORES" in filtro_rol:
+            target_rol = "OPERADOR"
+        elif "ADMINISTRADORES" in filtro_rol:
+            target_rol = "ADMIN"
+
+        # Determinar colaborador objetivo
+        target_emp_id = None
+        if "Todos" not in filtro_emp and "(" in filtro_emp:
+            try:
+                target_emp_id = filtro_emp.split("(")[1].split(")")[0].strip()
+            except Exception:
+                target_emp_id = None
+
+        # 1. Filtrar Tabla de Empleados
+        prod_emp = _normalizar_produccion_por_empleado(self.config)
+        emps_ord = sorted(
+            prod_emp.values(),
+            key=lambda x: (-int(x.get("total", 0) or 0), str(x.get("nombre", "")).lower()),
+        )
+        emps_filtrados = []
+        for e in emps_ord:
+            e_rol = str(e.get("rol", "OPERADOR")).upper()
+            e_id = str(e.get("num_empleado", "")).strip()
+
+            if target_rol == "OPERADOR" and e_rol != "OPERADOR":
+                continue
+            if target_rol == "ADMIN" and e_rol not in ("ADMIN", "ADMINISTRADOR", "INGENIERO"):
+                continue
+            if target_emp_id and e_id != target_emp_id:
+                continue
+            emps_filtrados.append(e)
+
+        self.tbl_stats_empleados.setRowCount(len(emps_filtrados))
+        for r_idx, e in enumerate(emps_filtrados):
+            tot_e = max(0, int(e.get("total", 0) or 0))
+            nok_e = max(0, min(tot_e, int(e.get("nok", 0) or 0)))
+            ok_e = max(0, tot_e - nok_e)
+            cal_e = f"{(ok_e / tot_e * 100.0):.1f}%" if tot_e > 0 else "100.0%"
+            vals_e = [
+                str(e.get("num_empleado", "-")),
+                str(e.get("nombre", "-")),
+                str(e.get("rol", "OPERADOR")),
+                str(int(e.get("ciclos", 0) or 0)),
+                str(tot_e),
+                str(ok_e),
+                str(nok_e),
+                cal_e,
+            ]
+            for c_idx, v in enumerate(vals_e):
+                cell = QTableWidgetItem(v)
+                cell.setTextAlignment(Qt.AlignCenter)
+                self.tbl_stats_empleados.setItem(r_idx, c_idx, cell)
+
+        # 2. Filtrar Tabla de Historial de Cortes Horarios
+        hist = self.config.get("historial_horas", [])
+        cortes_filtrados = []
+        tot_flt = 0
+        ok_flt = 0
+        nok_flt = 0
+
+        # Mapa de nombres a roles
+        map_usuario_rol = {
+            str(u.get("user", "")).lower(): str(u.get("rol", "OPERADOR")).upper()
+            for u in self.config.get("usuarios", [])
+        }
+        for u in self.config.get("usuarios", []):
+            map_usuario_rol[str(u.get("nombre", "")).lower()] = str(u.get("rol", "OPERADOR")).upper()
+            map_usuario_rol[str(u.get("num", "")).lower()] = str(u.get("rol", "OPERADOR")).upper()
+
+        for item in reversed(hist):
+            f_str = str(item.get("fecha", "")).strip()
+
+            # A) Filtro Fecha
+            if target_fecha and not f_str.startswith(target_fecha):
+                continue
+
+            # B) Filtro Hora / Turno
+            if "Todas" not in filtro_hora:
+                hora_corte = None
+                if len(f_str) >= 13 and ":" in f_str:
+                    try:
+                        hora_corte = int(f_str[11:13])
+                    except ValueError:
+                        hora_corte = None
+
+                if hora_corte is not None:
+                    if "Turno 1" in filtro_hora:
+                        if not (6 <= hora_corte < 14):
+                            continue
+                    elif "Turno 2" in filtro_hora:
+                        if not (14 <= hora_corte < 22):
+                            continue
+                    elif "Turno 3" in filtro_hora:
+                        if not (hora_corte >= 22 or hora_corte < 6):
+                            continue
+                    elif "Hora " in filtro_hora:
+                        try:
+                            h_target = int(filtro_hora.replace("Hora ", "").split(":")[0])
+                            if hora_corte != h_target:
+                                continue
+                        except Exception:
+                            pass
+
+            # C) Filtro Rol
+            usr_corte = str(item.get("usuario", "")).strip()
+            rol_corte = str(item.get("rol", "")).upper()
+            if not rol_corte:
+                rol_corte = map_usuario_rol.get(usr_corte.lower(), "OPERADOR")
+
+            if target_rol == "OPERADOR" and rol_corte != "OPERADOR":
+                continue
+            if target_rol == "ADMIN" and rol_corte not in ("ADMIN", "ADMINISTRADOR", "INGENIERO"):
+                continue
+
+            # D) Filtro Colaborador Específico
+            if target_emp_id:
+                if (target_emp_id.lower() not in usr_corte.lower()) and (
+                    usr_corte.lower() not in target_emp_id.lower()
+                ):
+                    continue
+
+            cortes_filtrados.append(item)
+            t_pz = int(item.get("total", 0) or 0)
+            n_pz = int(item.get("nok", 0) or 0)
+            o_pz = int(item.get("ok", t_pz - n_pz) or 0)
+            tot_flt += t_pz
+            ok_flt += o_pz
+            nok_flt += n_pz
+
+        self.tbl_stats.setRowCount(len(cortes_filtrados))
+        for r_idx, item in enumerate(cortes_filtrados):
+            vals = [
+                item.get("fecha", "-"),
+                item.get("usuario", "-"),
+                item.get("receta", "-"),
+                str(item.get("total", 0)),
+                str(item.get("ok", 0)),
+                str(item.get("nok", 0)),
+                str(item.get("calidad", "100.0%")),
+            ]
+            for c_idx, v in enumerate(vals):
+                cell = QTableWidgetItem(v)
+                cell.setTextAlignment(Qt.AlignCenter)
+                self.tbl_stats.setItem(r_idx, c_idx, cell)
+
+        # 3. Resumen y Etiqueta
+        hay_filtros = (
+            "Todas" not in filtro_fecha
+            or "Todas" not in filtro_hora
+            or "Todos" not in filtro_rol
+            or "Todos" not in filtro_emp
+        )
+
+        if hasattr(self, "lbl_flt_resumen"):
+            if hay_filtros:
+                self.lbl_flt_resumen.setText(
+                    f"Filtro activo: {len(cortes_filtrados)} cortes coincidentes | {len(emps_filtrados)} colaboradores"
+                )
+            else:
+                self.lbl_flt_resumen.setText(f"Mostrando todos los registros ({len(hist)} cortes históricos)")
+
+        if hasattr(self, "lbl_stats_general_resumen"):
+            if hay_filtros:
+                cal_flt = f"{(ok_flt / tot_flt * 100.0):.1f}%" if tot_flt > 0 else "100.0%"
+                self.lbl_stats_general_resumen.setText(
+                    f"REGISTRO GENERAL FILTRADO:  "
+                    f"Total: {tot_flt}  |  OK: {ok_flt}  |  NO OK: {nok_flt}  |  Calidad: {cal_flt}"
+                )
+            else:
+                ok_g = max(0, self.produccion_total - self.produccion_nok)
+                cal_g = f"{(ok_g / self.produccion_total * 100.0):.1f}%" if self.produccion_total > 0 else "100.0%"
+                self.lbl_stats_general_resumen.setText(
+                    f"REGISTRO GENERAL DE PIEZAS (SOLO ADMIN):  "
+                    f"Total: {self.produccion_total}  |  OK: {ok_g}  |  NO OK: {self.produccion_nok}  |  Calidad: {cal_g}"
+                )
+
+    def _refresh_admin_stats_table(self):
+        # 1. Actualizar catálogo de recetas
         if hasattr(self, "tbl_stats_recetas"):
             recetas = self.config.get("recetas", [])
             self.tbl_stats_recetas.setRowCount(len(recetas))
@@ -7496,49 +7842,11 @@ class KostalHmiWindow(QMainWindow):
                     cell.setTextAlignment(Qt.AlignCenter)
                     self.tbl_stats_recetas.setItem(r_idx, c_idx, cell)
 
-        if hasattr(self, "tbl_stats_empleados"):
-            prod_emp = _normalizar_produccion_por_empleado(self.config)
-            emps_ord = sorted(
-                prod_emp.values(),
-                key=lambda x: (-int(x.get("total", 0) or 0), str(x.get("nombre", "")).lower()),
-            )
-            self.tbl_stats_empleados.setRowCount(len(emps_ord))
-            for r_idx, e in enumerate(emps_ord):
-                tot_e = max(0, int(e.get("total", 0) or 0))
-                nok_e = max(0, min(tot_e, int(e.get("nok", 0) or 0)))
-                ok_e = max(0, tot_e - nok_e)
-                cal_e = f"{(ok_e / tot_e * 100.0):.1f}%" if tot_e > 0 else "100.0%"
-                vals_e = [
-                    str(e.get("num_empleado", "-")),
-                    str(e.get("nombre", "-")),
-                    str(e.get("rol", "OPERADOR")),
-                    str(int(e.get("ciclos", 0) or 0)),
-                    str(tot_e),
-                    str(ok_e),
-                    str(nok_e),
-                    cal_e,
-                ]
-                for c_idx, v in enumerate(vals_e):
-                    cell = QTableWidgetItem(v)
-                    cell.setTextAlignment(Qt.AlignCenter)
-                    self.tbl_stats_empleados.setItem(r_idx, c_idx, cell)
+        # 2. Poblar opciones de combos de filtrado dinámico
+        self._poblar_opciones_filtros_stats()
 
-        hist = self.config.get("historial_horas", [])
-        self.tbl_stats.setRowCount(len(hist))
-        for r_idx, item in enumerate(reversed(hist)):
-            vals = [
-                item.get("fecha", "-"),
-                item.get("usuario", "-"),
-                item.get("receta", "-"),
-                str(item.get("total", 0)),
-                str(item.get("ok", 0)),
-                str(item.get("nok", 0)),
-                str(item.get("calidad", "100.0%")),
-            ]
-            for c_idx, v in enumerate(vals):
-                cell = QTableWidgetItem(v)
-                cell.setTextAlignment(Qt.AlignCenter)
-                self.tbl_stats.setItem(r_idx, c_idx, cell)
+        # 3. Aplicar filtros sobre colaboradores y cortes horarios
+        self._aplicar_filtros_stats()
 
     def _reset_production_counters(self):
         def _ejecutar_reinicio():
