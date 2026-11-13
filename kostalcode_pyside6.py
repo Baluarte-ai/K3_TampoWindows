@@ -75,79 +75,78 @@ _ultimo_teclado_ts = 0.0
 _estado_teclado_visible = False
 
 
+def _asegurar_teclado_tactil_nativo_windows():
+    """Habilita en el registro de Windows la invocación automática del teclado táctil nativo en modo escritorio."""
+    if os.name != "nt":
+        return
+    try:
+        import winreg
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\TabletTip\1.7")
+        winreg.SetValueEx(key, "EnableDesktopModeAutoInvoke", 0, winreg.REG_DWORD, 1)
+        winreg.CloseKey(key)
+    except Exception:
+        pass
+
+
 def abrir_teclado_tactil_windows(forzar=False):
-    """Abre de manera confiable el teclado nativo en pantalla de Windows sin bloquear la UI."""
+    """Solicita el despliegue del teclado táctil nativo de Windows (TabTip) a través del método de entrada del sistema."""
     global _ultimo_teclado_ts, _estado_teclado_visible
     if os.name != "nt":
         return
     ahora = time.time()
-    if not forzar and (ahora - _ultimo_teclado_ts < 0.5):
+    if not forzar and (ahora - _ultimo_teclado_ts < 0.6):
         return
     _ultimo_teclado_ts = ahora
     _estado_teclado_visible = True
 
+    # 1. Solicitar a Qt invocar el método de entrada nativo del sistema operativo
+    try:
+        app = QApplication.instance()
+        if app and hasattr(app, "inputMethod"):
+            im = app.inputMethod()
+            if im:
+                im.show()
+    except Exception:
+        pass
+
+    # 2. Invocación directa del ejecutable táctil nativo TabTip.exe
     def _async_launch():
-        # 1. Invocación mediante ShellExecuteW con osk.exe (garantizado en Windows 10/11)
-        try:
-            import ctypes
-            res = ctypes.windll.shell32.ShellExecuteW(None, "open", "osk.exe", None, None, 1)
-            if int(res) > 32:
-                return
-        except Exception:
-            pass
-
-        # 2. Rutas nativas directas de osk.exe evitando redirección de WOW64
-        windir = os.environ.get("WINDIR", r"C:\Windows")
-        rutas_osk = [
-            os.path.join(windir, "Sysnative", "osk.exe"),
-            os.path.join(windir, "System32", "osk.exe"),
-            "osk.exe",
+        rutas_tabtip = [
+            r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
+            r"C:\Program Files (x86)\Common Files\microsoft shared\ink\TabTip.exe",
         ]
-        for ruta in rutas_osk:
-            try:
-                if os.path.exists(ruta) or ruta == "osk.exe":
-                    subprocess.Popen(
-                        [ruta],
-                        shell=False,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
-                    )
+        for ruta in rutas_tabtip:
+            if os.path.exists(ruta):
+                try:
+                    subprocess.Popen([ruta], shell=False)
                     return
-            except Exception:
-                continue
-
-        # 3. Alternativa mediante ShellExecuteW para TabTip
-        try:
-            import ctypes
-            ctypes.windll.shell32.ShellExecuteW(None, "open", "tabtip.exe", None, None, 1)
-        except Exception:
-            pass
+                except Exception:
+                    try:
+                        os.system(f'start "" "{ruta}"')
+                        return
+                    except Exception:
+                        pass
+                break
 
     threading.Thread(target=_async_launch, daemon=True).start()
 
 
 def ocultar_teclado_tactil_windows(forzar=False):
-    """Solicita el cierre del teclado en pantalla cuando se confirma una entrada."""
+    """Solicita ocultar el teclado táctil nativo de Windows."""
     global _estado_teclado_visible
     if os.name != "nt":
         return
     if not _estado_teclado_visible and not forzar:
         return
     _estado_teclado_visible = False
-    if forzar:
-        def _async_hide():
-            try:
-                subprocess.run(
-                    ["taskkill", "/F", "/IM", "osk.exe"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
-                    timeout=0.5,
-                )
-            except Exception:
-                pass
-        threading.Thread(target=_async_hide, daemon=True).start()
+    try:
+        app = QApplication.instance()
+        if app and hasattr(app, "inputMethod"):
+            im = app.inputMethod()
+            if im:
+                im.hide()
+    except Exception:
+        pass
 
 
 class _AutoTouchKeyboardFilter(QObject):
@@ -4173,11 +4172,6 @@ class KostalHmiWindow(QMainWindow):
         top_bar.addWidget(lbl_est)
         top_bar.addStretch(1)
 
-        btn_kb_top = QPushButton("Teclado")
-        btn_kb_top.setStyleSheet("background-color: #334155; color: white; padding: 6px 12px;")
-        btn_kb_top.clicked.connect(lambda: abrir_teclado_tactil_windows(forzar=True))
-        top_bar.addWidget(btn_kb_top)
-
         btn_min = QPushButton("Minimizar")
         btn_min.setStyleSheet("background-color: #475569; color: white; padding: 6px 12px;")
         btn_min.clicked.connect(self.showMinimized)
@@ -4482,16 +4476,6 @@ class KostalHmiWindow(QMainWindow):
         self.lbl_header_timer = QLabel("00:00:00")
         self.lbl_header_timer.setStyleSheet("color: #94A3B8; font-family: Consolas; font-size: 11px; font-weight: 700;")
         right_lay.addWidget(self.lbl_header_timer)
-
-        # Botón para invocar teclado en pantalla nativo
-        self.btn_header_kb = QPushButton("Teclado")
-        self.btn_header_kb.setFixedHeight(30)
-        self.btn_header_kb.setToolTip("Abrir teclado en pantalla nativo de Windows")
-        self.btn_header_kb.setStyleSheet(
-            "background-color: #1E293B; color: #38BDF8; font-size: 10px; font-weight: 800; padding: 0 6px; border-radius: 5px;"
-        )
-        self.btn_header_kb.clicked.connect(lambda: abrir_teclado_tactil_windows(forzar=True))
-        right_lay.addWidget(self.btn_header_kb)
 
         self.btn_header_logout = QPushButton("Cerrar Sesión")
         self.btn_header_logout.setFixedHeight(30)
@@ -5480,8 +5464,6 @@ class KostalHmiWindow(QMainWindow):
         self.btn_header_logout.setText(self._tr("cerrar_sesion"))
         self.btn_header_fs.setText(self._tr("salir_pantalla") if self.isFullScreen() else self._tr("pantalla"))
         self.btn_header_min.setText(self._tr("minimizar"))
-        if hasattr(self, "btn_header_kb"):
-            self.btn_header_kb.setText("Teclado" if self.idioma == "ES" else "Keyboard")
 
         self.lbl_title_info_proc.setText(self._tr("info_proceso"))
         self.lbl_rec_activa_title.setText(self._tr("receta_activa"))
@@ -8462,6 +8444,7 @@ def main():
 
     kb_filter = _AutoTouchKeyboardFilter(app)
     app.installEventFilter(kb_filter)
+    _asegurar_teclado_tactil_nativo_windows()
 
     window = KostalHmiWindow()
     window.show()
