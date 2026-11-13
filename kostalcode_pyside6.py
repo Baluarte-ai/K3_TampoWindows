@@ -7937,14 +7937,27 @@ class KostalHmiWindow(QMainWindow):
         lay.setContentsMargins(18, 16, 18, 16)
         lay.setSpacing(12)
 
+        hdr_u = QHBoxLayout()
         lbl = QLabel("Administración de Usuarios y Roles de Acceso")
         lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 16px; font-weight: 900;")
-        lay.addWidget(lbl)
+        hdr_u.addWidget(lbl)
+        hdr_u.addStretch(1)
+
+        self._admin_users_pass_visible_all = False
+        self.btn_toggle_all_passwords = QPushButton("👁️ Mostrar Todas las Contraseñas")
+        self.btn_toggle_all_passwords.setMinimumHeight(38)
+        self.btn_toggle_all_passwords.setStyleSheet(
+            f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 12px; font-weight: 800; border-radius: 6px; padding: 0 14px;"
+        )
+        self.btn_toggle_all_passwords.clicked.connect(self._toggle_all_admin_passwords)
+        hdr_u.addWidget(self.btn_toggle_all_passwords)
+        lay.addLayout(hdr_u)
 
         self.tbl_users = QTableWidget(0, 4)
         self.tbl_users.setHorizontalHeaderLabels(["ID Usuario", "Nombre Completo", "Rol", "Contraseña"])
         self.tbl_users.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tbl_users.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tbl_users.cellClicked.connect(self._on_user_table_cell_clicked)
         lay.addWidget(self.tbl_users, 1)
 
         row_add = QHBoxLayout()
@@ -7953,8 +7966,31 @@ class KostalHmiWindow(QMainWindow):
         self.inp_u_id.setPlaceholderText("ID usuario (ej. KOSTAL-0842)")
         self.inp_u_nom = QLineEdit()
         self.inp_u_nom.setPlaceholderText("Nombre completo")
+
+        # Campo contraseña con modo Password y botón de ojito incorporado
         self.inp_u_pass = QLineEdit()
+        self.inp_u_pass.setEchoMode(QLineEdit.Password)
         self.inp_u_pass.setPlaceholderText("Contraseña / PIN")
+        self.inp_u_pass.setTextMargins(0, 0, 38, 0)
+
+        in_pass_u_lay = QHBoxLayout(self.inp_u_pass)
+        in_pass_u_lay.setContentsMargins(0, 0, 6, 0)
+        in_pass_u_lay.setSpacing(0)
+        in_pass_u_lay.addStretch(1)
+
+        self.btn_u_pass_eye = QPushButton(self.inp_u_pass)
+        self.btn_u_pass_eye.setFixedSize(30, 30)
+        self.btn_u_pass_eye.setCursor(Qt.PointingHandCursor)
+        self.btn_u_pass_eye.setFocusPolicy(Qt.NoFocus)
+        self.btn_u_pass_eye.setToolTip("Mostrar u ocultar contraseña")
+        self.btn_u_pass_eye.setIcon(crear_icono_ojo(False))
+        self.btn_u_pass_eye.setIconSize(QSize(18, 18))
+        self.btn_u_pass_eye.setStyleSheet(
+            "QPushButton { background-color: transparent; border: none; border-radius: 6px; padding: 0px; }"
+            "QPushButton:hover { background-color: #E2E8F0; }"
+        )
+        self.btn_u_pass_eye.clicked.connect(self._toggle_input_user_pass_visibility)
+
         self.combo_u_rol = QComboBox()
         self.combo_u_rol.setView(QListView())
         self.combo_u_rol.addItems(["OPERADOR", "ADMINISTRADOR"])
@@ -7984,16 +8020,133 @@ class KostalHmiWindow(QMainWindow):
         lay.addLayout(row_add)
         return tab
 
+    def _toggle_input_user_pass_visibility(self):
+        if self.inp_u_pass.echoMode() == QLineEdit.Password:
+            self.inp_u_pass.setEchoMode(QLineEdit.Normal)
+            self.btn_u_pass_eye.setIcon(crear_icono_ojo(True))
+            self.btn_u_pass_eye.setStyleSheet(
+                "QPushButton { background-color: #E0F2FE; border: none; border-radius: 6px; padding: 0px; }"
+                "QPushButton:hover { background-color: #BAE6FD; }"
+            )
+        else:
+            self.inp_u_pass.setEchoMode(QLineEdit.Password)
+            self.btn_u_pass_eye.setIcon(crear_icono_ojo(False))
+            self.btn_u_pass_eye.setStyleSheet(
+                "QPushButton { background-color: transparent; border: none; border-radius: 6px; padding: 0px; }"
+                "QPushButton:hover { background-color: #E2E8F0; }"
+            )
+        self.inp_u_pass.setFocus()
+
+    def _on_user_table_cell_clicked(self, row, _col):
+        if row < 0 or row >= self.tbl_users.rowCount():
+            return
+        it_id = self.tbl_users.item(row, 0)
+        it_nom = self.tbl_users.item(row, 1)
+        it_rol = self.tbl_users.item(row, 2)
+        w_pass = self.tbl_users.cellWidget(row, 3)
+
+        if it_id:
+            self.inp_u_id.setText(it_id.text())
+        if it_nom:
+            self.inp_u_nom.setText(it_nom.text())
+        if it_rol:
+            idx_r = self.combo_u_rol.findText(it_rol.text())
+            if idx_r >= 0:
+                self.combo_u_rol.setCurrentIndex(idx_r)
+        if w_pass and hasattr(w_pass, "_pwd_real"):
+            self.inp_u_pass.setText(w_pass._pwd_real)
+
+    def _crear_widget_password_celda(self, pwd_real: str, _fila_idx: int):
+        cell_widget = QWidget()
+        h_box = QHBoxLayout(cell_widget)
+        h_box.setContentsMargins(12, 2, 12, 2)
+        h_box.setSpacing(8)
+
+        lbl_p = QLabel("••••••••")
+        lbl_p.setAlignment(Qt.AlignCenter)
+        lbl_p.setStyleSheet("font-family: Consolas, monospace; font-size: 14px; font-weight: 900; color: #475569;")
+        h_box.addWidget(lbl_p, 1)
+
+        btn_eye = QPushButton()
+        btn_eye.setFixedSize(32, 32)
+        btn_eye.setCursor(Qt.PointingHandCursor)
+        btn_eye.setFocusPolicy(Qt.NoFocus)
+        btn_eye.setToolTip("Mostrar / Ocultar contraseña")
+        btn_eye.setIcon(crear_icono_ojo(False))
+        btn_eye.setIconSize(QSize(20, 20))
+        btn_eye.setStyleSheet(
+            "QPushButton { background-color: transparent; border: none; border-radius: 6px; padding: 2px; }"
+            "QPushButton:hover { background-color: #E2E8F0; }"
+        )
+
+        cell_widget._pwd_real = pwd_real
+        cell_widget._visible = False
+        cell_widget._lbl = lbl_p
+        cell_widget._btn = btn_eye
+
+        def _toggle_cell():
+            cell_widget._visible = not cell_widget._visible
+            if cell_widget._visible:
+                lbl_p.setText(cell_widget._pwd_real)
+                lbl_p.setStyleSheet(f"font-family: Consolas, monospace; font-size: 13px; font-weight: 900; color: {COLOR_BRAND_PRIMARY};")
+                btn_eye.setIcon(crear_icono_ojo(True))
+                btn_eye.setStyleSheet(
+                    "QPushButton { background-color: #E0F2FE; border: none; border-radius: 6px; padding: 2px; }"
+                    "QPushButton:hover { background-color: #BAE6FD; }"
+                )
+            else:
+                lbl_p.setText("••••••••")
+                lbl_p.setStyleSheet("font-family: Consolas, monospace; font-size: 14px; font-weight: 900; color: #475569;")
+                btn_eye.setIcon(crear_icono_ojo(False))
+                btn_eye.setStyleSheet(
+                    "QPushButton { background-color: transparent; border: none; border-radius: 6px; padding: 2px; }"
+                    "QPushButton:hover { background-color: #E2E8F0; }"
+                )
+
+        btn_eye.clicked.connect(_toggle_cell)
+        h_box.addWidget(btn_eye)
+        return cell_widget
+
+    def _toggle_all_admin_passwords(self):
+        self._admin_users_pass_visible_all = not getattr(self, "_admin_users_pass_visible_all", False)
+        for r in range(self.tbl_users.rowCount()):
+            w = self.tbl_users.cellWidget(r, 3)
+            if w and hasattr(w, "_visible") and w._visible != self._admin_users_pass_visible_all:
+                w._btn.click()
+        if self._admin_users_pass_visible_all:
+            self.btn_toggle_all_passwords.setText("🙈 Ocultar Todas las Contraseñas")
+            self.btn_toggle_all_passwords.setStyleSheet(
+                "background-color: #0284C7; color: white; font-size: 12px; font-weight: 800; border-radius: 6px; padding: 0 14px;"
+            )
+        else:
+            self.btn_toggle_all_passwords.setText("👁️ Mostrar Todas las Contraseñas")
+            self.btn_toggle_all_passwords.setStyleSheet(
+                f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 12px; font-weight: 800; border-radius: 6px; padding: 0 14px;"
+            )
+
     def _refresh_admin_users_table(self):
         usrs = self.config.get("usuarios", [])
         self.tbl_users.setRowCount(len(usrs))
         for r_idx, u in enumerate(usrs):
-            uid = u.get("num") or u.get("user") or ""
-            vals = (uid, u.get("nombre", ""), u.get("rol", ""), u.get("pass", ""))
+            uid = str(u.get("num") or u.get("user") or "")
+            nom = str(u.get("nombre", ""))
+            rol = str(u.get("rol", ""))
+            pwd = str(u.get("pass", ""))
+
+            vals = (uid, nom, rol)
             for c_idx, val in enumerate(vals):
                 it = QTableWidgetItem(str(val))
                 it.setTextAlignment(Qt.AlignCenter)
                 self.tbl_users.setItem(r_idx, c_idx, it)
+
+            # Columna 3: Contraseña con máscara y botón ojito
+            pass_widget = self._crear_widget_password_celda(pwd, r_idx)
+            self.tbl_users.setCellWidget(r_idx, 3, pass_widget)
+
+            # Si el toggle global estaba activo, mantener estado
+            if getattr(self, "_admin_users_pass_visible_all", False):
+                pass_widget._btn.click()
+
         self._refresh_login_users_combo()
 
     def _admin_add_user(self):
