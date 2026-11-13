@@ -28,6 +28,8 @@ import sqlite3
 import datetime
 import subprocess
 import threading
+import shutil
+import uuid
 
 from PySide6.QtCore import (
     Qt, QThread, Signal, Slot, QTimer, QPropertyAnimation, QEasingCurve,
@@ -6718,8 +6720,31 @@ class KostalHmiWindow(QMainWindow):
         lbl_img_f = QLabel("Imagen de Pieza:")
         lbl_img_f.setStyleSheet("font-size: 13px; font-weight: 700; color: #334155;")
         form.addWidget(lbl_img_f, 6, 0)
+
+        img_input_lay = QHBoxLayout()
+        img_input_lay.setSpacing(8)
         self.adm_rec_img.setMinimumHeight(40)
-        form.addWidget(self.adm_rec_img, 6, 1, 1, 3)
+        img_input_lay.addWidget(self.adm_rec_img, 1)
+
+        btn_browse_inline = QPushButton("📁 Buscar Foto...")
+        btn_browse_inline.setMinimumHeight(40)
+        btn_browse_inline.setStyleSheet(
+            f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 12px; font-weight: 800; padding: 0 14px; border-radius: 6px;"
+        )
+        btn_browse_inline.clicked.connect(self._admin_browse_image)
+        img_input_lay.addWidget(btn_browse_inline)
+
+        self.lbl_adm_img_preview = QLabel("[Sin imagen]")
+        self.lbl_adm_img_preview.setFixedSize(76, 52)
+        self.lbl_adm_img_preview.setAlignment(Qt.AlignCenter)
+        self.lbl_adm_img_preview.setStyleSheet(
+            "background-color: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 9px; color: #64748B;"
+        )
+        img_input_lay.addWidget(self.lbl_adm_img_preview)
+
+        form.addLayout(img_input_lay, 6, 1, 1, 3)
+
+        self.adm_rec_img.textChanged.connect(lambda _t: self._actualizar_preview_imagen_admin())
 
         self._adm_prev_total_pz = 15
 
@@ -6825,6 +6850,7 @@ class KostalHmiWindow(QMainWindow):
         self.adm_rec_cy.setText(str(rec.get("cero_y", rec.get("cero_guardado_y", 0.0))))
         self.adm_rec_vel.setText(str(rec.get("vel_x", rec.get("velocidad", 100.0))))
         self.adm_rec_img.setText(rec.get("imagen", "pieza_default.png"))
+        self._actualizar_preview_imagen_admin(rec.get("imagen", "pieza_default.png"))
 
     def _on_admin_recipe_selected(self, nom):
         if nom == "— NUEVA RECETA (Sin guardar) —":
@@ -6880,12 +6906,139 @@ class KostalHmiWindow(QMainWindow):
         self.adm_rec_nombre.setFocus()
         self.adm_rec_nombre.selectAll()
 
+    def _actualizar_preview_imagen_admin(self, ruta_texto=None):
+        if not hasattr(self, "lbl_adm_img_preview"):
+            return
+        if ruta_texto is None:
+            ruta_texto = self.adm_rec_img.text().strip()
+
+        ruta_res = buscar_recurso(ruta_texto)
+        if ruta_res and os.path.exists(ruta_res):
+            pix = QPixmap(ruta_res)
+            if not pix.isNull():
+                self.lbl_adm_img_preview.setPixmap(
+                    pix.scaled(72, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+                self.lbl_adm_img_preview.setText("")
+                self.lbl_adm_img_preview.setToolTip(f"Imagen activa: {ruta_texto}")
+                return
+        self.lbl_adm_img_preview.setPixmap(QPixmap())
+        self.lbl_adm_img_preview.setText("[Sin imagen]")
+        self.lbl_adm_img_preview.setToolTip("No se encontró el archivo de imagen especificado.")
+
+    def _asignar_imagen_receta(self, ruta_origen: str):
+        if not ruta_origen or not os.path.isfile(ruta_origen):
+            return
+
+        assets_dir = os.path.join(BASE_DIR, "Assets")
+        os.makedirs(assets_dir, exist_ok=True)
+
+        ruta_abs_origen = os.path.abspath(ruta_origen)
+        ruta_abs_assets = os.path.abspath(assets_dir)
+
+        # Si el archivo ya se encuentra dentro de la carpeta Assets del proyecto
+        try:
+            es_hijo = os.path.commonpath([ruta_abs_origen, ruta_abs_assets]) == ruta_abs_assets
+        except Exception:
+            es_hijo = False
+
+        if es_hijo:
+            rel_name = os.path.relpath(ruta_abs_origen, BASE_DIR).replace("\\", "/")
+            self.adm_rec_img.setText(rel_name)
+            self._actualizar_preview_imagen_admin(rel_name)
+            log_debug_hmi(f"Imagen seleccionada desde carpeta Assets local: {rel_name}")
+            return
+
+        # Si proviene de una carpeta externa (Descargas, Escritorio, USB, etc.), lo copiamos a Assets/
+        nombre_base = os.path.basename(ruta_origen)
+        nombre_sin_ext, ext = os.path.splitext(nombre_base)
+        ext = ext.lower()
+        if not ext:
+            ext = ".png"
+
+        nombre_limpio = "".join(c for c in nombre_sin_ext if c.isalnum() or c in ("-", "_")).strip()
+        if not nombre_limpio:
+            nombre_limpio = "pieza"
+
+        destino_nombre = f"{nombre_limpio}{ext}"
+        destino_path = os.path.join(assets_dir, destino_nombre)
+
+        # Si ya existe un archivo con ese nombre, comparar contenido o agregar identificador único
+        if os.path.exists(destino_path):
+            try:
+                import hashlib
+                with open(ruta_abs_origen, "rb") as f1, open(destino_path, "rb") as f2:
+                    h1 = hashlib.md5(f1.read()).hexdigest()
+                    h2 = hashlib.md5(f2.read()).hexdigest()
+                if h1 != h2:
+                    destino_nombre = f"{nombre_limpio}_{uuid.uuid4().hex[:6]}{ext}"
+                    destino_path = os.path.join(assets_dir, destino_nombre)
+            except Exception:
+                destino_nombre = f"{nombre_limpio}_{uuid.uuid4().hex[:6]}{ext}"
+                destino_path = os.path.join(assets_dir, destino_nombre)
+
+        try:
+            shutil.copy2(ruta_abs_origen, destino_path)
+            rel_name = f"Assets/{destino_nombre}"
+            self.adm_rec_img.setText(rel_name)
+            self._actualizar_preview_imagen_admin(rel_name)
+            log_debug_hmi(f"Imagen externa copiada exitosamente a Assets: {rel_name} (Origen: {ruta_origen})")
+        except Exception as e_copy:
+            log_debug_hmi(f"No se pudo copiar a Assets ({e_copy}). Usando ruta original.")
+            ruta_norm = ruta_origen.replace("\\", "/")
+            self.adm_rec_img.setText(ruta_norm)
+            self._actualizar_preview_imagen_admin(ruta_norm)
+
     def _admin_browse_image(self):
-        fn, _ = QFileDialog.getOpenFileName(
-            self, "Seleccionar Imagen de Pieza", BASE_DIR, "Imágenes (*.png *.jpg *.jpeg *.bmp)"
+        assets_dir = os.path.join(BASE_DIR, "Assets")
+        os.makedirs(assets_dir, exist_ok=True)
+
+        dir_inicial = assets_dir
+        val_actual = self.adm_rec_img.text().strip()
+        if val_actual:
+            ruta_act = buscar_recurso(val_actual)
+            if ruta_act and os.path.exists(ruta_act):
+                dir_inicial = os.path.dirname(ruta_act)
+
+        filtros = (
+            "Imágenes (*.png *.jpg *.jpeg *.bmp *.webp *.ico *.PNG *.JPG *.JPEG *.BMP *.WEBP);;"
+            "Archivos PNG (*.png *.PNG);;"
+            "Archivos JPEG (*.jpg *.jpeg *.JPG *.JPEG);;"
+            "Todos los Archivos (*.*)"
         )
-        if fn:
-            self.adm_rec_img.setText(fn)
+
+        fn = None
+        # En Windows y Fullscreen, usamos DontUseNativeDialog si estamos en Fullscreen
+        # para garantizar que el selector NUNCA quede invisible o bloqueado detrás de Qt.
+        usar_no_nativo = self.isFullScreen()
+
+        try:
+            dialog = QFileDialog(self, "Seleccionar Imagen de Pieza", dir_inicial, filtros)
+            dialog.setFileMode(QFileDialog.ExistingFile)
+            dialog.setViewMode(QFileDialog.Detail)
+            dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowStaysOnTopHint)
+            if usar_no_nativo:
+                dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+            if dialog.exec():
+                sel = dialog.selectedFiles()
+                if sel and sel[0]:
+                    fn = sel[0]
+        except Exception as ex_dlg:
+            log_debug_hmi(f"Aviso en diálogo interactivo de archivo: {ex_dlg}. Usando fallback.")
+            try:
+                fn, _ = QFileDialog.getOpenFileName(
+                    self,
+                    "Seleccionar Imagen de Pieza",
+                    dir_inicial,
+                    filtros,
+                    options=QFileDialog.Option.DontUseNativeDialog,
+                )
+            except Exception as ex_fall:
+                log_debug_hmi(f"Error en selector de imagen: {ex_fall}")
+                fn = None
+
+        if fn and os.path.isfile(fn):
+            self._asignar_imagen_receta(fn)
 
     def _admin_take_current_pos_as_zero(self):
         self.adm_rec_cx.setText(f"{limitar_coord_x(self.pos_actual_x):.2f}")
