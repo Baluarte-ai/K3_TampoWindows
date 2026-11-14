@@ -288,7 +288,8 @@ CONFIG_DEFAULT = {
     "opc_server_bind_ip": "0.0.0.0",
     "opc_server_port": "4840",
     "plc_namespace": 4,
-    "node_prefix": "|var|WAGO 750-8212 PFC200 G2 2ETH RS XTR.Application.GVL.",
+    "node_prefix": "|var|WAGO 750-8212 PFC200 G2 2ETH RS.Application.PLC_PRG.",
+    "node_prefix_io": "|var|WAGO 750-8212 PFC200 G2 2ETH RS.Application.IoConfig_Globals_Mapping.",
     "estacion_nombre": "EST-KOSTAL-04",
     "home_x": 0.0,
     "home_y": 0.0,
@@ -2012,6 +2013,12 @@ def cargar_configuracion_disco():
                     cfg.update(datos)
         except Exception as e:
             print(f"Error leyendo {CONFIG_FILE}: {e}")
+    # Migrar prefijo OPC UA heredado (XTR.Application.GVL.) al prefijo real del PLC WAGO (PLC_PRG / IoConfig_Globals_Mapping)
+    old_bad_prefix = "|var|WAGO 750-8212 PFC200 G2 2ETH RS XTR.Application.GVL."
+    if cfg.get("node_prefix") == old_bad_prefix:
+        cfg["node_prefix"] = CONFIG_DEFAULT["node_prefix"]
+    if not cfg.get("node_prefix_io") or "XTR.Application.GVL." in str(cfg.get("node_prefix_io", "")):
+        cfg["node_prefix_io"] = CONFIG_DEFAULT["node_prefix_io"]
     # Normalizar recetas (soportando ambos formatos de llaves en config_hmi.json)
     cfg["recetas"] = _normalizar_lista_recetas(cfg.get("recetas", []))
     # Normalizar usuarios (soportando tanto la llave 'num' de config_hmi.json como 'user')
@@ -2195,21 +2202,24 @@ class OpcUaWorker(QThread):
     physical_paint_start_requested = Signal()
     splash_progress = Signal(int, str, bool, bool)  # pct, msg, finished, connected
 
+    # Variables ubicadas en IoConfig_Globals_Mapping del PLC WAGO (el resto vive en PLC_PRG)
+    IO_NODE_KEYS = {"ALARM_X", "ALARM_Y", "PE", "SENSOR_X", "SENSOR_Y", "TAMPO"}
+
     NODE_MAP = {
         "INICIO": "INICIO",
-        "POSICION_INICIAL": "POSICION_INICIAL",
+        "HOME": "HOME",
+        "POSICION_INICIAL": "HOME",
         "RESET": "RESET",
         "STOP": "STOP",
         "MANUAL": "MANUAL",
-        "AUTO": "AUTO",
         "CRUZETA": "CRUZETA",
         "NUEVA_POSICION": "NUEVA_POSICION",
         "POS_X": "POS_X",
         "POS_Y": "POS_Y",
         "HOME_X": "HOME_X",
         "HOME_Y": "HOME_Y",
-        "VELOCIDAD_X": "VELOCIDAD_X",
-        "VELOCIDAD_Y": "VELOCIDAD_Y",
+        "VELOCIDAD_X": "VEL_X",
+        "VELOCIDAD_Y": "VEL_Y",
         "PINTAR": "PINTAR",
         "S_TAMPO": "S_TAMPO",
         "PINTADO": "PINTADO",
@@ -2373,10 +2383,18 @@ class OpcUaWorker(QThread):
         ip = self.config_ref.get("opc_ip", "192.168.1.69").strip()
         port = self.config_ref.get("opc_port", "4840").strip()
         ns = int(self.config_ref.get("plc_namespace", 4))
-        prefix = self.config_ref.get(
+        prefix_prg = self.config_ref.get(
             "node_prefix",
-            "|var|WAGO 750-8212 PFC200 G2 2ETH RS XTR.Application.GVL.",
-        )
+            "|var|WAGO 750-8212 PFC200 G2 2ETH RS.Application.PLC_PRG.",
+        ).strip()
+        prefix_io = self.config_ref.get("node_prefix_io", "").strip()
+        if not prefix_io:
+            if ".PLC_PRG." in prefix_prg:
+                prefix_io = prefix_prg.replace(".PLC_PRG.", ".IoConfig_Globals_Mapping.")
+            elif ".GVL." in prefix_prg:
+                prefix_io = prefix_prg.replace(".GVL.", ".IoConfig_Globals_Mapping.")
+            else:
+                prefix_io = "|var|WAGO 750-8212 PFC200 G2 2ETH RS.Application.IoConfig_Globals_Mapping."
         if not self._ping_socket(ip, port, timeout=1.2):
             return False
         try:
@@ -2390,21 +2408,56 @@ class OpcUaWorker(QThread):
             self.client.connect()
             self.nodes.clear()
             self.optional_nodes.clear()
+            missing_nodes = []
             for key, suffix in self.NODE_MAP.items():
-                node_id = f"ns={ns};s={prefix}{suffix}"
-                self.nodes[key] = self.client.get_node(node_id)
-            for opt_key in ("NUEVA_POS", "M_PINTAR", "BTN_PINTAR"):
+                base = prefix_io if key in self.IO_NODE_KEYS else prefix_prg
+                node_id = f"ns={ns};s={base}{suffix}"
+                candidates = [node_id]
+                if key == "S_TAMPO":
+                    candidates.extend([
+                        f"ns={ns};s={prefix_prg}S.tampo",
+                        f"ns={ns};s={prefix_io}S_TAMPO",
+                    ])
+                linked = None
+                for cand_id in candidates:
+                    try:
+                        cand_node = self.client.get_node(cand_id)
+                        cand_node.get_value()
+                        linked = cand_node
+                        break
+                    except Exception:
+                        continue
+                if linked is not None:
+                    self.nodes[key] = linked
+                else:
+                    missing_nodes.append(f"{key}({node_id})")
+            if missing_nodes:
+                log_debug_hmi(f"[OPC-UA] Nodos no encontrados en PLC: {', '.join(missing_nodes)}")
+            if not any(k in self.nodes for k in ("POS_X", "POS_Y", "INICIO", "LISTO")):
+                log_debug_hmi("[OPC-UA] Ningún nodo principal de PLC_PRG respondió; verifique node_prefix.")
                 try:
-                    opt_node = self.client.get_node(f"ns={ns};s={prefix}{opt_key}")
-                    init_opt = opt_node.get_value()
-                    self.optional_nodes[opt_key] = opt_node
-                    if opt_key == "BTN_PINTAR":
-                        self._last_btn_pintar = bool(init_opt)
+                    self.client.disconnect()
                 except Exception:
                     pass
+                self.connected = False
+                return False
+            for opt_key in ("NUEVA_POS", "M_PINTAR", "BTN_PINTAR", "AUTO"):
+                for opt_base in (prefix_prg, prefix_io):
+                    try:
+                        opt_node = self.client.get_node(f"ns={ns};s={opt_base}{opt_key}")
+                        init_opt = opt_node.get_value()
+                        self.optional_nodes[opt_key] = opt_node
+                        if opt_key == "BTN_PINTAR":
+                            self._last_btn_pintar = bool(init_opt)
+                        break
+                    except Exception:
+                        pass
             self._last_vel_sent = None
             self.connected = True
-            log_debug_hmi(f"Conectado exitosamente al PLC WAGO en {url}")
+            log_debug_hmi(
+                f"Conectado exitosamente al PLC WAGO en {url} "
+                f"({len(self.nodes)}/{len(self.NODE_MAP)} nodos vinculados)"
+            )
             return True
         except Exception as e:
             log_debug_hmi(f"Error conectando a PLC OPC UA: {e}")
@@ -2626,10 +2679,11 @@ class OpcUaWorker(QThread):
                         "ALARM_X", "ALARM_Y", "PE", "SENSOR_X", "SENSOR_Y",
                         "TAMPO", "POS_X", "POS_Y",
                     ]
-                    node_list = [self.nodes[k] for k in read_keys if k in self.nodes]
-                    vals = self.client.get_values(node_list)
+                    active_read_keys = [k for k in read_keys if k in self.nodes]
+                    node_list = [self.nodes[k] for k in active_read_keys]
+                    vals = self.client.get_values(node_list) if node_list else []
                     snap = {}
-                    for k, v in zip(read_keys, vals):
+                    for k, v in zip(active_read_keys, vals):
                         if k in ("POS_X", "POS_Y"):
                             snap[k] = round(float(v or 0.0) / 100.0, 2)
                         else:
@@ -6302,7 +6356,7 @@ class KostalHmiWindow(QMainWindow):
         self.inp_coord_x.setText(f"{self.pos_actual_x:.1f}")
         self.inp_coord_y.setText(f"{self.pos_actual_y:.1f}")
         self.opc_worker.enqueue_move_xy(
-            self.pos_actual_x, self.pos_actual_y, self.velocidad_actual, trigger_var="POSICION_INICIAL", pulse_ms=450
+            self.pos_actual_x, self.pos_actual_y, self.velocidad_actual, trigger_var="HOME", pulse_ms=450
         )
         log_debug_hmi(f"Comando HOME ejecutado -> X:{self.pos_actual_x:.2f}, Y:{self.pos_actual_y:.2f}")
 
