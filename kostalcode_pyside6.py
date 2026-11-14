@@ -3879,7 +3879,7 @@ class KostalHmiWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("KOSTAL — Sistema de Control de Tampografía Industrial (PySide6 60 FPS)")
-        self.resize(1366, 780)
+        self.resize(1920, 1080)
         self.setMinimumSize(1120, 680)
         self.setStyleSheet(KOSTAL_GLOBAL_QSS)
 
@@ -4366,39 +4366,39 @@ class KostalHmiWindow(QMainWindow):
         # ---------------- HEADER SUPERIOR ----------------
         header = QFrame()
         header.setObjectName("HeaderBar")
-        header.setFixedHeight(50)
+        header.setFixedHeight(56)
         hlay = QHBoxLayout(header)
-        hlay.setContentsMargins(10, 4, 10, 4)
-        hlay.setSpacing(6)
+        hlay.setContentsMargins(14, 6, 14, 6)
+        hlay.setSpacing(8)
 
         # Bloque Izquierdo: Logos y Estación
         left_box = QWidget()
         left_lay = QHBoxLayout(left_box)
         left_lay.setContentsMargins(0, 0, 0, 0)
-        left_lay.setSpacing(6)
+        left_lay.setSpacing(8)
 
-        pix_kostal_hdr = cargar_logo_corporativo("LogoKostal.webp", 120, 24)
+        pix_kostal_hdr = cargar_logo_corporativo("LogoKostal.webp", 140, 28)
         lbl_logo = QLabel()
         if pix_kostal_hdr:
             lbl_logo.setPixmap(pix_kostal_hdr)
         else:
             lbl_logo.setText("KOSTAL")
-            lbl_logo.setStyleSheet("color: #FFFFFF; font-size: 18px; font-weight: 900; letter-spacing: 1px;")
+            lbl_logo.setStyleSheet("color: #FFFFFF; font-size: 20px; font-weight: 900; letter-spacing: 1.5px;")
         left_lay.addWidget(lbl_logo)
 
         self.lbl_header_estacion = QLabel(self.config.get("estacion_nombre", "EST-KOSTAL-04"))
         self.lbl_header_estacion.setStyleSheet(
-            "background-color: #1E293B; color: #38BDF8; font-size: 10px; font-weight: 800; "
-            "padding: 3px 6px; border-radius: 4px;"
+            "background-color: #1E293B; color: #38BDF8; font-size: 11px; font-weight: 800; "
+            "padding: 4px 8px; border-radius: 5px;"
         )
         left_lay.addWidget(self.lbl_header_estacion)
 
-        pix_bal_hdr = cargar_logo_corporativo("LOGO_BALUARTE.png", 95, 24)
+        pix_bal_hdr = cargar_logo_corporativo("LOGO_BALUARTE.png", 115, 28)
         if pix_bal_hdr:
             bal_badge = QFrame()
-            bal_badge.setStyleSheet("background-color: #FFFFFF; border-radius: 4px;")
+            bal_badge.setStyleSheet("background-color: #FFFFFF; border-radius: 5px;")
             bal_lay = QHBoxLayout(bal_badge)
-            bal_lay.setContentsMargins(6, 2, 6, 2)
+            bal_lay.setContentsMargins(8, 2, 8, 2)
             lbl_bal_hdr = QLabel()
             lbl_bal_hdr.setPixmap(pix_bal_hdr)
             bal_lay.addWidget(lbl_bal_hdr)
@@ -4408,95 +4408,95 @@ class KostalHmiWindow(QMainWindow):
 
         hlay.addStretch(1)
 
-        # Banner de Estado General Central (ancho elástico y controlado)
+        # Banner de Estado General Central (ancho elástico y adaptativo para 1920x1080)
         self.lbl_banner_estado = QLabel("SISTEMA LISTO PARA OPERAR")
         self.lbl_banner_estado.setAlignment(Qt.AlignCenter)
-        self.lbl_banner_estado.setMinimumWidth(150)
-        self.lbl_banner_estado.setMaximumWidth(240)
-        self.lbl_banner_estado.setFixedHeight(30)
+        self.lbl_banner_estado.setMinimumWidth(200)
+        self.lbl_banner_estado.setMaximumWidth(360)
+        self.lbl_banner_estado.setFixedHeight(36)
         self.lbl_banner_estado.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.lbl_banner_estado.setStyleSheet(
-            f"background-color: {COLOR_OK}; color: #FFFFFF; font-size: 11px; font-weight: 800; "
-            "padding: 0 10px; border-radius: 6px;"
+            f"background-color: {COLOR_OK}; color: #FFFFFF; font-size: 12px; font-weight: 900; "
+            "padding: 0 16px; border-radius: 7px; letter-spacing: 0.5px;"
         )
         hlay.addWidget(self.lbl_banner_estado, 0)
 
         hlay.addStretch(1)
 
-        # Bloque Derecho: Usuario, Selector de Idioma, Teclado y Controles
+        # Bloque Derecho: Usuario, Selector de Idioma y Controles
         right_box = QWidget()
         right_lay = QHBoxLayout(right_box)
         right_lay.setContentsMargins(0, 0, 0, 0)
-        right_lay.setSpacing(5)
+        right_lay.setSpacing(6)
 
         user_card = QFrame()
-        user_card.setStyleSheet("background-color: #1E293B; border-radius: 5px;")
+        user_card.setStyleSheet("background-color: #1E293B; border-radius: 6px;")
         uc_lay = QHBoxLayout(user_card)
-        uc_lay.setContentsMargins(6, 2, 6, 2)
-        uc_lay.setSpacing(6)
+        uc_lay.setContentsMargins(8, 3, 8, 3)
+        uc_lay.setSpacing(8)
 
         self.lbl_header_user = QLabel("USUARIO: Juan Pérez")
-        self.lbl_header_user.setStyleSheet("color: #F8FAFC; font-size: 11px; font-weight: 800;")
+        self.lbl_header_user.setStyleSheet("color: #F8FAFC; font-size: 12px; font-weight: 800;")
         uc_lay.addWidget(self.lbl_header_user)
 
         self.lbl_header_rol = QLabel("OPERADOR")
         self.lbl_header_rol.setStyleSheet(
-            "background-color: #0284C7; color: #FFFFFF; font-size: 9px; font-weight: 800; "
-            "padding: 2px 6px; border-radius: 3px;"
+            "background-color: #0284C7; color: #FFFFFF; font-size: 10px; font-weight: 800; "
+            "padding: 3px 7px; border-radius: 4px;"
         )
         uc_lay.addWidget(self.lbl_header_rol)
         right_lay.addWidget(user_card)
 
         self.btn_header_admin = QPushButton("Panel Admin")
-        self.btn_header_admin.setFixedHeight(30)
+        self.btn_header_admin.setFixedHeight(34)
         self.btn_header_admin.setStyleSheet(
-            "background-color: #7C3AED; color: white; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
+            "background-color: #7C3AED; color: white; font-size: 11px; font-weight: 800; padding: 0 12px; border-radius: 6px;"
         )
         self.btn_header_admin.clicked.connect(self._open_admin_panel)
         right_lay.addWidget(self.btn_header_admin)
 
         # Selector de idioma [ES | EN]
         lang_box = QFrame()
-        lang_box.setStyleSheet("background-color: #1E293B; border-radius: 5px;")
+        lang_box.setStyleSheet("background-color: #1E293B; border-radius: 6px;")
         llay = QHBoxLayout(lang_box)
-        llay.setContentsMargins(2, 2, 2, 2)
+        llay.setContentsMargins(3, 2, 3, 2)
         llay.setSpacing(2)
 
         self.btn_lang_es = QPushButton("ES")
-        self.btn_lang_es.setFixedSize(26, 24)
+        self.btn_lang_es.setFixedSize(32, 28)
         self.btn_lang_es.clicked.connect(lambda: self.cambiar_idioma("ES"))
         llay.addWidget(self.btn_lang_es)
 
         self.btn_lang_en = QPushButton("EN")
-        self.btn_lang_en.setFixedSize(26, 24)
+        self.btn_lang_en.setFixedSize(32, 28)
         self.btn_lang_en.clicked.connect(lambda: self.cambiar_idioma("EN"))
         llay.addWidget(self.btn_lang_en)
         right_lay.addWidget(lang_box)
 
         self.lbl_header_timer = QLabel("00:00:00")
-        self.lbl_header_timer.setStyleSheet("color: #94A3B8; font-family: Consolas; font-size: 11px; font-weight: 700;")
+        self.lbl_header_timer.setStyleSheet("color: #94A3B8; font-family: Consolas; font-size: 13px; font-weight: 800;")
         right_lay.addWidget(self.lbl_header_timer)
 
         self.btn_header_logout = QPushButton("Cerrar Sesión")
-        self.btn_header_logout.setFixedHeight(30)
+        self.btn_header_logout.setFixedHeight(34)
         self.btn_header_logout.setStyleSheet(
-            "background-color: #334155; color: #F8FAFC; font-size: 10px; font-weight: 700; padding: 0 8px; border-radius: 5px;"
+            "background-color: #334155; color: #F8FAFC; font-size: 11px; font-weight: 800; padding: 0 12px; border-radius: 6px;"
         )
         self.btn_header_logout.clicked.connect(self._cerrar_sesion)
         right_lay.addWidget(self.btn_header_logout)
 
         self.btn_header_fs = QPushButton("Pantalla Completa")
-        self.btn_header_fs.setFixedHeight(30)
+        self.btn_header_fs.setFixedHeight(34)
         self.btn_header_fs.setStyleSheet(
-            "background-color: #1E293B; color: #E2E8F0; font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 5px;"
+            "background-color: #1E293B; color: #E2E8F0; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
         )
         self.btn_header_fs.clicked.connect(self.alternar_pantalla_completa)
         right_lay.addWidget(self.btn_header_fs)
 
         self.btn_header_min = QPushButton("Minimizar")
-        self.btn_header_min.setFixedHeight(30)
+        self.btn_header_min.setFixedHeight(34)
         self.btn_header_min.setStyleSheet(
-            "background-color: #1E293B; color: #E2E8F0; font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 5px;"
+            "background-color: #1E293B; color: #E2E8F0; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
         )
         self.btn_header_min.clicked.connect(self.showMinimized)
         right_lay.addWidget(self.btn_header_min)
@@ -4569,9 +4569,9 @@ class KostalHmiWindow(QMainWindow):
         row_rec_hdr.addStretch(1)
 
         self.btn_ver_jigs = QPushButton("Ver Jigs")
-        self.btn_ver_jigs.setFixedHeight(26)
+        self.btn_ver_jigs.setFixedHeight(30)
         self.btn_ver_jigs.setStyleSheet(
-            f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 11px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
+            f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
         )
         self.btn_ver_jigs.clicked.connect(self.abrir_dialogo_seleccion_jig)
         row_rec_hdr.addWidget(self.btn_ver_jigs)
@@ -4705,18 +4705,18 @@ class KostalHmiWindow(QMainWindow):
         nok_ctrl_row.setContentsMargins(0, 0, 0, 0)
         nok_ctrl_row.setSpacing(4)
         btn_nok_m = QPushButton("-")
-        btn_nok_m.setFixedSize(22, 22)
+        btn_nok_m.setFixedSize(26, 26)
         btn_nok_m.setStyleSheet(
-            f"background-color: #FEE2E2; color: {COLOR_ERR}; font-size: 12px; font-weight: 900; padding: 0; border-radius: 4px;"
+            f"background-color: #FEE2E2; color: {COLOR_ERR}; font-size: 14px; font-weight: 900; padding: 0; border-radius: 5px;"
         )
         btn_nok_m.clicked.connect(lambda: self.ajustar_nok_manual(-1))
         self.lbl_kpi_nok_val = QLabel("0")
         self.lbl_kpi_nok_val.setAlignment(Qt.AlignCenter)
         self.lbl_kpi_nok_val.setStyleSheet(f"font-family: Consolas; font-size: 16px; font-weight: 900; color: {COLOR_ERR};")
         btn_nok_p = QPushButton("+")
-        btn_nok_p.setFixedSize(22, 22)
+        btn_nok_p.setFixedSize(26, 26)
         btn_nok_p.setStyleSheet(
-            f"background-color: #FEE2E2; color: {COLOR_ERR}; font-size: 12px; font-weight: 900; padding: 0; border-radius: 4px;"
+            f"background-color: #FEE2E2; color: {COLOR_ERR}; font-size: 14px; font-weight: 900; padding: 0; border-radius: 5px;"
         )
         btn_nok_p.clicked.connect(lambda: self.ajustar_nok_manual(1))
         nok_ctrl_row.addWidget(btn_nok_m)
@@ -4742,7 +4742,7 @@ class KostalHmiWindow(QMainWindow):
         cplay.addWidget(self.admin_general_box)
 
         self.btn_reg_fin_hora = QPushButton("Registrar Fin de Hora")
-        self.btn_reg_fin_hora.setMinimumHeight(34)
+        self.btn_reg_fin_hora.setMinimumHeight(38)
         self.btn_reg_fin_hora.setStyleSheet(
             f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 12px; font-weight: 800; border-radius: 7px;"
         )
@@ -4798,9 +4798,9 @@ class KostalHmiWindow(QMainWindow):
         hdr_row.addStretch(1)
 
         self.btn_recetario_admin_shortcut = QPushButton("Recetario Admin")
-        self.btn_recetario_admin_shortcut.setFixedHeight(26)
+        self.btn_recetario_admin_shortcut.setFixedHeight(30)
         self.btn_recetario_admin_shortcut.setStyleSheet(
-            "background-color: #E0F2FE; color: #0369A1; font-size: 11px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
+            "background-color: #E0F2FE; color: #0369A1; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
         )
         self.btn_recetario_admin_shortcut.clicked.connect(self._open_admin_panel)
         hdr_row.addWidget(self.btn_recetario_admin_shortcut)
@@ -4823,17 +4823,17 @@ class KostalHmiWindow(QMainWindow):
         badge_row.addWidget(self.lbl_matriz_dist_badge, 1)
 
         self.btn_patron_toggle = QPushButton("Patrón: Vertical")
-        self.btn_patron_toggle.setFixedHeight(26)
+        self.btn_patron_toggle.setFixedHeight(28)
         self.btn_patron_toggle.setStyleSheet(
-            f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
+            f"background-color: {COLOR_BRAND_PRIMARY}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 5px;"
         )
         self.btn_patron_toggle.clicked.connect(self.alternar_patron_pintado)
         badge_row.addWidget(self.btn_patron_toggle)
 
         self.btn_coords_toggle = QPushButton("Coords: ON")
-        self.btn_coords_toggle.setFixedHeight(26)
+        self.btn_coords_toggle.setFixedHeight(28)
         self.btn_coords_toggle.setStyleSheet(
-            "background-color: #0284C7; color: white; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
+            "background-color: #0284C7; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 5px;"
         )
         self.btn_coords_toggle.clicked.connect(self.alternar_mostrar_coords)
         badge_row.addWidget(self.btn_coords_toggle)
@@ -4862,9 +4862,9 @@ class KostalHmiWindow(QMainWindow):
         tlay.addStretch(1)
 
         self.btn_probar_mov = QPushButton("Probar Movimiento")
-        self.btn_probar_mov.setFixedHeight(25)
+        self.btn_probar_mov.setFixedHeight(28)
         self.btn_probar_mov.setStyleSheet(
-            "background-color: #0F172A; color: #38BDF8; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
+            "background-color: #0F172A; color: #38BDF8; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 5px;"
         )
         self.btn_probar_mov.clicked.connect(self.probar_movimiento_pieza_actual)
         tlay.addWidget(self.btn_probar_mov)
@@ -4875,7 +4875,7 @@ class KostalHmiWindow(QMainWindow):
         self.prog_ciclo = QProgressBar()
         self.prog_ciclo.setRange(0, 100)
         self.prog_ciclo.setValue(0)
-        self.prog_ciclo.setFixedHeight(14)
+        self.prog_ciclo.setFixedHeight(16)
         flay.addWidget(self.prog_ciclo)
 
         # Lienzo vectorial de 60 FPS
@@ -4968,9 +4968,9 @@ class KostalHmiWindow(QMainWindow):
         jhdr.addStretch(1)
 
         self.btn_fold_jog = QPushButton("▲ Plegar")
-        self.btn_fold_jog.setFixedHeight(24)
+        self.btn_fold_jog.setFixedHeight(28)
         self.btn_fold_jog.setStyleSheet(
-            "background-color: #E2E8F0; color: #1E293B; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
+            "background-color: #E2E8F0; color: #1E293B; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
         )
         self.btn_fold_jog.clicked.connect(self.alternar_panel_jog)
         jhdr.addWidget(self.btn_fold_jog)
@@ -4984,7 +4984,7 @@ class KostalHmiWindow(QMainWindow):
         mode_vel_row = QHBoxLayout()
         mode_vel_row.setSpacing(6)
         self.btn_modo = QPushButton("MODO: AUTO")
-        self.btn_modo.setMinimumHeight(34)
+        self.btn_modo.setMinimumHeight(38)
         self.btn_modo.clicked.connect(self.alternar_modo)
         mode_vel_row.addWidget(self.btn_modo, 1)
 
@@ -5018,7 +5018,7 @@ class KostalHmiWindow(QMainWindow):
         paso_row.addWidget(self.lbl_paso_jog_tit)
 
         btn_p_minus = QPushButton("-")
-        btn_p_minus.setFixedSize(26, 26)
+        btn_p_minus.setFixedSize(30, 28)
         btn_p_minus.clicked.connect(lambda: self.ajustar_paso_jog(-0.5))
         paso_row.addWidget(btn_p_minus)
 
@@ -5029,20 +5029,20 @@ class KostalHmiWindow(QMainWindow):
         paso_row.addWidget(self.inp_paso_jog)
 
         btn_p_plus = QPushButton("+")
-        btn_p_plus.setFixedSize(26, 26)
+        btn_p_plus.setFixedSize(30, 28)
         btn_p_plus.clicked.connect(lambda: self.ajustar_paso_jog(0.5))
         paso_row.addWidget(btn_p_plus)
 
         btn_numpad = QPushButton("NUM")
-        btn_numpad.setFixedSize(38, 26)
-        btn_numpad.setStyleSheet("background-color: #E0F2FE; color: #0369A1; font-size: 10px; font-weight: 800; padding: 0;")
+        btn_numpad.setFixedSize(44, 28)
+        btn_numpad.setStyleSheet("background-color: #E0F2FE; color: #0369A1; font-size: 11px; font-weight: 800; padding: 0;")
         btn_numpad.clicked.connect(self.abrir_teclado_numerico_paso)
         paso_row.addWidget(btn_numpad)
 
         for pv in (0.5, 1.0, 2.0, 5.0):
             bp = QPushButton(f"{pv:g}")
-            bp.setFixedSize(28, 24)
-            bp.setStyleSheet("background-color: #E2E8F0; color: #0F172A; font-size: 10px; font-weight: 800; padding: 0;")
+            bp.setFixedSize(32, 28)
+            bp.setStyleSheet("background-color: #E2E8F0; color: #0F172A; font-size: 11px; font-weight: 800; padding: 0;")
             bp.clicked.connect(lambda _, val=pv: self.set_paso_jog_directo(val))
             paso_row.addWidget(bp)
 
@@ -5129,17 +5129,17 @@ class KostalHmiWindow(QMainWindow):
         hm_row = QHBoxLayout()
         hm_row.setSpacing(6)
         self.btn_home = QPushButton("Ir a Home")
-        self.btn_home.setMinimumHeight(34)
+        self.btn_home.setMinimumHeight(38)
         self.btn_home.setStyleSheet(
-            "background-color: #0284C7; color: white; font-size: 12px; font-weight: 800; border-radius: 6px;"
+            "background-color: #0284C7; color: white; font-size: 13px; font-weight: 800; border-radius: 6px;"
         )
         self.btn_home.clicked.connect(self.ejecutar_home_general)
         hm_row.addWidget(self.btn_home)
 
         self.btn_tampo_manual = QPushButton("Activar Tampo")
-        self.btn_tampo_manual.setMinimumHeight(34)
+        self.btn_tampo_manual.setMinimumHeight(38)
         self.btn_tampo_manual.setStyleSheet(
-            "background-color: #475569; color: white; font-size: 12px; font-weight: 800; border-radius: 6px;"
+            "background-color: #475569; color: white; font-size: 13px; font-weight: 800; border-radius: 6px;"
         )
         self.btn_tampo_manual.clicked.connect(self.activar_tampo_manual)
         hm_row.addWidget(self.btn_tampo_manual)
@@ -5147,9 +5147,9 @@ class KostalHmiWindow(QMainWindow):
 
         # Sección colapsable de Calibración (Set 0 / Set Home)
         self.btn_toggle_cal = QPushButton("▼ Desplegar Calibración (Set 0 / Set Home)")
-        self.btn_toggle_cal.setFixedHeight(26)
+        self.btn_toggle_cal.setFixedHeight(28)
         self.btn_toggle_cal.setStyleSheet(
-            "background-color: #F1F5F9; color: #334155; font-size: 10px; font-weight: 800; border: 1px solid #CBD5E1; border-radius: 5px;"
+            "background-color: #F1F5F9; color: #334155; font-size: 11px; font-weight: 800; border: 1px solid #CBD5E1; border-radius: 5px;"
         )
         self.btn_toggle_cal.clicked.connect(self.alternar_seccion_calibracion)
         c_lay.addWidget(self.btn_toggle_cal)
@@ -5158,17 +5158,17 @@ class KostalHmiWindow(QMainWindow):
         cal_lay = QHBoxLayout()
         cal_lay.setSpacing(6)
         self.btn_set_0 = QPushButton("Set 0")
-        self.btn_set_0.setMinimumHeight(32)
+        self.btn_set_0.setMinimumHeight(36)
         self.btn_set_0.setStyleSheet(
-            f"background-color: {COLOR_WARN}; color: white; font-size: 11px; font-weight: 800; border-radius: 6px;"
+            f"background-color: {COLOR_WARN}; color: white; font-size: 12px; font-weight: 800; border-radius: 6px;"
         )
         self.btn_set_0.clicked.connect(self.guardar_posicion_como_cero)
         cal_lay.addWidget(self.btn_set_0)
 
         self.btn_set_home = QPushButton("Set Home")
-        self.btn_set_home.setMinimumHeight(32)
+        self.btn_set_home.setMinimumHeight(36)
         self.btn_set_home.setStyleSheet(
-            "background-color: #475569; color: white; font-size: 11px; font-weight: 800; border-radius: 6px;"
+            "background-color: #475569; color: white; font-size: 12px; font-weight: 800; border-radius: 6px;"
         )
         self.btn_set_home.clicked.connect(self.guardar_posicion_como_home)
         cal_lay.addWidget(self.btn_set_home)
@@ -5208,9 +5208,9 @@ class KostalHmiWindow(QMainWindow):
         mhdr.addStretch(1)
 
         self.btn_fold_mandos = QPushButton("▲ Plegar")
-        self.btn_fold_mandos.setFixedHeight(24)
+        self.btn_fold_mandos.setFixedHeight(28)
         self.btn_fold_mandos.setStyleSheet(
-            "background-color: #E2E8F0; color: #1E293B; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 5px;"
+            "background-color: #E2E8F0; color: #1E293B; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
         )
         self.btn_fold_mandos.clicked.connect(self.alternar_panel_mandos)
         mhdr.addWidget(self.btn_fold_mandos)
@@ -5223,29 +5223,29 @@ class KostalHmiWindow(QMainWindow):
         ir_row = QHBoxLayout()
         ir_row.setSpacing(8)
         self.btn_inicio = QPushButton("INICIO")
-        self.btn_inicio.setMinimumHeight(46)
+        self.btn_inicio.setMinimumHeight(52)
         self.btn_inicio.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_inicio.setStyleSheet(
-            f"background-color: {COLOR_OK}; color: white; font-size: 14px; font-weight: 900; border-radius: 8px;"
+            f"background-color: {COLOR_OK}; color: white; font-size: 16px; font-weight: 900; border-radius: 8px;"
         )
         self.btn_inicio.clicked.connect(self.iniciar_ciclo_general)
         ir_row.addWidget(self.btn_inicio)
 
         self.btn_reset = QPushButton("RESET")
-        self.btn_reset.setMinimumHeight(46)
+        self.btn_reset.setMinimumHeight(52)
         self.btn_reset.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_reset.setStyleSheet(
-            f"background-color: {COLOR_WARN}; color: white; font-size: 14px; font-weight: 900; border-radius: 8px;"
+            f"background-color: {COLOR_WARN}; color: white; font-size: 16px; font-weight: 900; border-radius: 8px;"
         )
         self.btn_reset.clicked.connect(self.ejecutar_reset_general)
         ir_row.addWidget(self.btn_reset)
         mc_lay.addLayout(ir_row, 1)
 
         self.btn_paro = QPushButton("PARO")
-        self.btn_paro.setMinimumHeight(54)
+        self.btn_paro.setMinimumHeight(64)
         self.btn_paro.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_paro.setStyleSheet(
-            f"background-color: {COLOR_ERR}; color: white; font-size: 16px; font-weight: 900; border-radius: 8px;"
+            f"background-color: {COLOR_ERR}; color: white; font-size: 18px; font-weight: 900; border-radius: 8px;"
         )
         self.btn_paro.clicked.connect(self.alternar_stop)
         mc_lay.addWidget(self.btn_paro, 1)
@@ -5454,11 +5454,11 @@ class KostalHmiWindow(QMainWindow):
 
         # Estilo activo en botones [ES | EN]
         if self.idioma == "ES":
-            self.btn_lang_es.setStyleSheet("background-color: #0284C7; color: white; font-size: 10px; font-weight: 900; border-radius: 4px; padding: 0;")
-            self.btn_lang_en.setStyleSheet("background-color: transparent; color: #94A3B8; font-size: 10px; font-weight: 700; border-radius: 4px; padding: 0;")
+            self.btn_lang_es.setStyleSheet("background-color: #0284C7; color: white; font-size: 11px; font-weight: 900; border-radius: 4px; padding: 0;")
+            self.btn_lang_en.setStyleSheet("background-color: transparent; color: #94A3B8; font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0;")
         else:
-            self.btn_lang_en.setStyleSheet("background-color: #0284C7; color: white; font-size: 10px; font-weight: 900; border-radius: 4px; padding: 0;")
-            self.btn_lang_es.setStyleSheet("background-color: transparent; color: #94A3B8; font-size: 10px; font-weight: 700; border-radius: 4px; padding: 0;")
+            self.btn_lang_en.setStyleSheet("background-color: #0284C7; color: white; font-size: 11px; font-weight: 900; border-radius: 4px; padding: 0;")
+            self.btn_lang_es.setStyleSheet("background-color: transparent; color: #94A3B8; font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0;")
 
         self.btn_header_admin.setText(self._tr("panel_admin"))
         self.btn_header_logout.setText(self._tr("cerrar_sesion"))
@@ -5695,41 +5695,41 @@ class KostalHmiWindow(QMainWindow):
         if self.estado_stop:
             self.btn_paro.setText(self._tr("paro_activo"))
             self.btn_paro.setStyleSheet(
-                "background-color: #7F1D1D; color: #FCA5A5; font-size: 15px; font-weight: 900; border: 2px solid #EF4444; border-radius: 8px;"
+                "background-color: #7F1D1D; color: #FCA5A5; font-size: 18px; font-weight: 900; border: 2px solid #EF4444; border-radius: 8px;"
             )
             self.lbl_banner_estado.setText(self._tr("paro_emergencia"))
             self.lbl_banner_estado.setStyleSheet(
-                f"background-color: {COLOR_ERR}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
+                f"background-color: {COLOR_ERR}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
             )
         else:
             self.btn_paro.setText(self._tr("paro"))
             self.btn_paro.setStyleSheet(
-                f"background-color: {COLOR_ERR}; color: white; font-size: 16px; font-weight: 900; border-radius: 8px;"
+                f"background-color: {COLOR_ERR}; color: white; font-size: 18px; font-weight: 900; border-radius: 8px;"
             )
             if self.paro_requiere_reset:
                 self.lbl_banner_estado.setText(self._tr("req_reset"))
                 self.lbl_banner_estado.setStyleSheet(
-                    f"background-color: {COLOR_WARN}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
+                    f"background-color: {COLOR_WARN}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
                 )
             elif self.paro_requiere_inicio:
                 self.lbl_banner_estado.setText(self._tr("req_inicio"))
                 self.lbl_banner_estado.setStyleSheet(
-                    f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
+                    f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
                 )
             elif self.estado_pintando:
                 self.lbl_banner_estado.setText(self._tr("en_proceso"))
                 self.lbl_banner_estado.setStyleSheet(
-                    f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
+                    f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
                 )
             elif self.estado_manual:
                 self.lbl_banner_estado.setText(self._tr("modo_man_act"))
                 self.lbl_banner_estado.setStyleSheet(
-                    f"background-color: {COLOR_WARN}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
+                    f"background-color: {COLOR_WARN}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
                 )
             else:
                 self.lbl_banner_estado.setText(self._tr("sistema_listo"))
                 self.lbl_banner_estado.setStyleSheet(
-                    f"background-color: {COLOR_OK}; color: white; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
+                    f"background-color: {COLOR_OK}; color: white; font-size: 12px; font-weight: 900; padding: 0 16px; border-radius: 7px;"
                 )
 
         # Actualizar Lienzo de 60 FPS
@@ -6692,14 +6692,6 @@ class KostalHmiWindow(QMainWindow):
             self.admin_nav_btns.append(b)
 
         slay.addStretch(1)
-
-        btn_kb_adm = QPushButton("Teclado en Pantalla")
-        btn_kb_adm.setMinimumHeight(50)
-        btn_kb_adm.setStyleSheet(
-            "background-color: #1E293B; color: #FFFFFF; font-size: 13px; font-weight: 800; border-radius: 8px;"
-        )
-        btn_kb_adm.clicked.connect(lambda: abrir_teclado_tactil_windows(forzar=True))
-        slay.addWidget(btn_kb_adm)
 
         body.addWidget(sidebar)
 
