@@ -2782,14 +2782,14 @@ class OpcUaWorker(QThread):
                     read_keys = [
                         "PINTADO", "M_ENE", "M_SET", "LISTO", "NO_LISTO",
                         "ALARM_X", "ALARM_Y", "PE", "SENSOR_X", "SENSOR_Y",
-                        "TAMPO", "POS_X", "POS_Y",
+                        "TAMPO", "POS_X", "POS_Y", "HOME_X", "HOME_Y",
                     ]
                     active_read_keys = [k for k in read_keys if k in self.nodes]
                     node_list = [self.nodes[k] for k in active_read_keys]
                     vals = self.client.get_values(node_list) if node_list else []
                     snap = {}
                     for k, v in zip(active_read_keys, vals):
-                        if k in ("POS_X", "POS_Y"):
+                        if k in ("POS_X", "POS_Y", "HOME_X", "HOME_Y"):
                             snap[k] = round(float(v or 0.0) / 100.0, 2)
                         else:
                             snap[k] = bool(v)
@@ -4073,6 +4073,8 @@ class KostalHmiWindow(QMainWindow):
 
         self.home_guardado_x = limitar_coord_x(self.config.get("home_x", 0.0))
         self.home_guardado_y = limitar_coord_y(self.config.get("home_y", 0.0))
+        self.plc_home_x = 0.0
+        self.plc_home_y = 0.0
         self.cero_guardado_x = limitar_coord_x(self.config.get("cero_x", 0.0))
         self.cero_guardado_y = limitar_coord_y(self.config.get("cero_y", 0.0))
 
@@ -5945,6 +5947,14 @@ class KostalHmiWindow(QMainWindow):
             self.ultimo_plc_rx_x = float(snap["POS_X"])
         if "POS_Y" in snap:
             self.ultimo_plc_rx_y = float(snap["POS_Y"])
+        if "HOME_X" in snap and "HOME_Y" in snap:
+            hx_plc = limitar_coord_x(snap["HOME_X"])
+            hy_plc = limitar_coord_y(snap["HOME_Y"])
+            self.plc_home_x = hx_plc
+            self.plc_home_y = hy_plc
+            if hx_plc != 0.0 or hy_plc != 0.0:
+                self.home_guardado_x = hx_plc
+                self.home_guardado_y = hy_plc
 
         self.lbl_tele_plcrx.setText(f"PLC RX: X={self.ultimo_plc_rx_x:.1f} Y={self.ultimo_plc_rx_y:.1f}")
 
@@ -6462,8 +6472,19 @@ class KostalHmiWindow(QMainWindow):
     def ejecutar_home_general(self):
         if not self._verificar_seguridad_antes_de_operar():
             return
-        self.pos_actual_x = self.home_guardado_x
-        self.pos_actual_y = self.home_guardado_y
+        if self.plc_conectado and (self.plc_home_x != 0.0 or self.plc_home_y != 0.0):
+            target_hx = self.plc_home_x
+            target_hy = self.plc_home_y
+            self.home_guardado_x = target_hx
+            self.home_guardado_y = target_hy
+        else:
+            target_hx = self.home_guardado_x
+            target_hy = self.home_guardado_y
+            if self.plc_conectado and (target_hx != 0.0 or target_hy != 0.0):
+                self.opc_worker.enqueue_write("HOME_X", target_hx)
+                self.opc_worker.enqueue_write("HOME_Y", target_hy)
+        self.pos_actual_x = target_hx
+        self.pos_actual_y = target_hy
         self.inp_coord_x.setText(f"{self.pos_actual_x:.1f}")
         self.inp_coord_y.setText(f"{self.pos_actual_y:.1f}")
         self.opc_worker.enqueue_move_xy(
