@@ -4527,37 +4527,37 @@ class KostalHmiWindow(QMainWindow):
         header.setObjectName("HeaderBar")
         header.setFixedHeight(56)
         hlay = QHBoxLayout(header)
-        hlay.setContentsMargins(14, 6, 14, 6)
-        hlay.setSpacing(8)
+        hlay.setContentsMargins(10, 6, 10, 6)
+        hlay.setSpacing(6)
 
         # Bloque Izquierdo: Logos y Estación
         left_box = QWidget()
         left_lay = QHBoxLayout(left_box)
         left_lay.setContentsMargins(0, 0, 0, 0)
-        left_lay.setSpacing(8)
+        left_lay.setSpacing(6)
 
-        pix_kostal_hdr = cargar_logo_corporativo("LogoKostal.webp", 140, 28)
+        pix_kostal_hdr = cargar_logo_corporativo("LogoKostal.webp", 110, 26)
         lbl_logo = QLabel()
         if pix_kostal_hdr:
             lbl_logo.setPixmap(pix_kostal_hdr)
         else:
             lbl_logo.setText("KOSTAL")
-            lbl_logo.setStyleSheet("color: #FFFFFF; font-size: 20px; font-weight: 900; letter-spacing: 1.5px;")
+            lbl_logo.setStyleSheet("color: #FFFFFF; font-size: 18px; font-weight: 900; letter-spacing: 1.2px;")
         left_lay.addWidget(lbl_logo)
 
         self.lbl_header_estacion = QLabel(self.config.get("estacion_nombre", "EST-KOSTAL-04"))
         self.lbl_header_estacion.setStyleSheet(
-            "background-color: #1E293B; color: #38BDF8; font-size: 11px; font-weight: 800; "
-            "padding: 4px 8px; border-radius: 5px;"
+            "background-color: #1E293B; color: #38BDF8; font-size: 10px; font-weight: 800; "
+            "padding: 3px 6px; border-radius: 5px;"
         )
         left_lay.addWidget(self.lbl_header_estacion)
 
-        pix_bal_hdr = cargar_logo_corporativo("LOGO_BALUARTE.png", 115, 28)
+        pix_bal_hdr = cargar_logo_corporativo("LOGO_BALUARTE.png", 95, 26)
         if pix_bal_hdr:
             bal_badge = QFrame()
             bal_badge.setStyleSheet("background-color: #FFFFFF; border-radius: 5px;")
             bal_lay = QHBoxLayout(bal_badge)
-            bal_lay.setContentsMargins(8, 2, 8, 2)
+            bal_lay.setContentsMargins(6, 2, 6, 2)
             lbl_bal_hdr = QLabel()
             lbl_bal_hdr.setPixmap(pix_bal_hdr)
             bal_lay.addWidget(lbl_bal_hdr)
@@ -4570,13 +4570,13 @@ class KostalHmiWindow(QMainWindow):
         # Banner de Estado General Central (ancho suficiente para no recortar el texto)
         self.lbl_banner_estado = QLabel("SISTEMA LISTO PARA OPERAR")
         self.lbl_banner_estado.setAlignment(Qt.AlignCenter)
-        self.lbl_banner_estado.setMinimumWidth(260)
-        self.lbl_banner_estado.setMaximumWidth(420)
-        self.lbl_banner_estado.setFixedHeight(36)
+        self.lbl_banner_estado.setMinimumWidth(240)
+        self.lbl_banner_estado.setMaximumWidth(360)
+        self.lbl_banner_estado.setFixedHeight(34)
         self.lbl_banner_estado.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.lbl_banner_estado.setStyleSheet(
             f"background-color: {COLOR_OK}; color: #FFFFFF; font-size: 11px; font-weight: 900; "
-            "padding: 0 14px; border-radius: 7px; letter-spacing: 0.2px;"
+            "padding: 0 10px; border-radius: 7px; letter-spacing: 0px;"
         )
         hlay.addWidget(self.lbl_banner_estado, 0)
 
@@ -4586,30 +4586,30 @@ class KostalHmiWindow(QMainWindow):
         right_box = QWidget()
         right_lay = QHBoxLayout(right_box)
         right_lay.setContentsMargins(0, 0, 0, 0)
-        right_lay.setSpacing(6)
+        right_lay.setSpacing(5)
 
         user_card = QFrame()
         user_card.setStyleSheet("background-color: #1E293B; border-radius: 6px;")
         uc_lay = QHBoxLayout(user_card)
-        uc_lay.setContentsMargins(8, 3, 8, 3)
-        uc_lay.setSpacing(8)
+        uc_lay.setContentsMargins(7, 3, 7, 3)
+        uc_lay.setSpacing(6)
 
-        self.lbl_header_user = QLabel("USUARIO: Juan Pérez")
-        self.lbl_header_user.setStyleSheet("color: #F8FAFC; font-size: 12px; font-weight: 800;")
+        self.lbl_header_user = QLabel("Juan Pérez")
+        self.lbl_header_user.setStyleSheet("color: #F8FAFC; font-size: 11px; font-weight: 800;")
         uc_lay.addWidget(self.lbl_header_user)
 
         self.lbl_header_rol = QLabel("OPERADOR")
         self.lbl_header_rol.setStyleSheet(
-            "background-color: #0284C7; color: #FFFFFF; font-size: 10px; font-weight: 800; "
-            "padding: 3px 7px; border-radius: 4px;"
+            "background-color: #0284C7; color: #FFFFFF; font-size: 9px; font-weight: 800; "
+            "padding: 2px 6px; border-radius: 4px;"
         )
         uc_lay.addWidget(self.lbl_header_rol)
         right_lay.addWidget(user_card)
 
         self.btn_header_admin = QPushButton("Panel Admin")
-        self.btn_header_admin.setFixedHeight(34)
+        self.btn_header_admin.setFixedHeight(32)
         self.btn_header_admin.setStyleSheet(
-            "background-color: #7C3AED; color: white; font-size: 11px; font-weight: 800; padding: 0 12px; border-radius: 6px;"
+            "background-color: #7C3AED; color: white; font-size: 10px; font-weight: 800; padding: 0 9px; border-radius: 6px;"
         )
         self.btn_header_admin.clicked.connect(self._open_admin_panel)
         right_lay.addWidget(self.btn_header_admin)
@@ -4618,44 +4618,44 @@ class KostalHmiWindow(QMainWindow):
         lang_box = QFrame()
         lang_box.setStyleSheet("background-color: #1E293B; border-radius: 6px;")
         llay = QHBoxLayout(lang_box)
-        llay.setContentsMargins(3, 2, 3, 2)
+        llay.setContentsMargins(2, 2, 2, 2)
         llay.setSpacing(2)
 
         self.btn_lang_es = QPushButton("ES")
-        self.btn_lang_es.setFixedSize(32, 28)
+        self.btn_lang_es.setFixedSize(28, 26)
         self.btn_lang_es.clicked.connect(lambda: self.cambiar_idioma("ES"))
         llay.addWidget(self.btn_lang_es)
 
         self.btn_lang_en = QPushButton("EN")
-        self.btn_lang_en.setFixedSize(32, 28)
+        self.btn_lang_en.setFixedSize(28, 26)
         self.btn_lang_en.clicked.connect(lambda: self.cambiar_idioma("EN"))
         llay.addWidget(self.btn_lang_en)
         right_lay.addWidget(lang_box)
 
         self.lbl_header_timer = QLabel("00:00:00")
-        self.lbl_header_timer.setStyleSheet("color: #94A3B8; font-family: Consolas; font-size: 13px; font-weight: 800;")
+        self.lbl_header_timer.setStyleSheet("color: #94A3B8; font-family: Consolas; font-size: 12px; font-weight: 800;")
         right_lay.addWidget(self.lbl_header_timer)
 
         self.btn_header_logout = QPushButton("Cerrar Sesión")
-        self.btn_header_logout.setFixedHeight(34)
+        self.btn_header_logout.setFixedHeight(32)
         self.btn_header_logout.setStyleSheet(
-            "background-color: #334155; color: #F8FAFC; font-size: 11px; font-weight: 800; padding: 0 12px; border-radius: 6px;"
+            "background-color: #334155; color: #F8FAFC; font-size: 10px; font-weight: 800; padding: 0 9px; border-radius: 6px;"
         )
         self.btn_header_logout.clicked.connect(self._cerrar_sesion)
         right_lay.addWidget(self.btn_header_logout)
 
         self.btn_header_fs = QPushButton("Pantalla Completa")
-        self.btn_header_fs.setFixedHeight(34)
+        self.btn_header_fs.setFixedHeight(32)
         self.btn_header_fs.setStyleSheet(
-            "background-color: #1E293B; color: #E2E8F0; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
+            "background-color: #1E293B; color: #E2E8F0; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 6px;"
         )
         self.btn_header_fs.clicked.connect(self.alternar_pantalla_completa)
         right_lay.addWidget(self.btn_header_fs)
 
         self.btn_header_min = QPushButton("Minimizar")
-        self.btn_header_min.setFixedHeight(34)
+        self.btn_header_min.setFixedHeight(32)
         self.btn_header_min.setStyleSheet(
-            "background-color: #1E293B; color: #E2E8F0; font-size: 11px; font-weight: 800; padding: 0 10px; border-radius: 6px;"
+            "background-color: #1E293B; color: #E2E8F0; font-size: 10px; font-weight: 800; padding: 0 8px; border-radius: 6px;"
         )
         self.btn_header_min.clicked.connect(self.showMinimized)
         right_lay.addWidget(self.btn_header_min)
@@ -6694,7 +6694,7 @@ class KostalHmiWindow(QMainWindow):
     def _update_user_header_ui(self):
         nom = self.usuario_actual.get("nombre", "Operador")
         rol = self.usuario_actual.get("rol", "OPERADOR").upper()
-        self.lbl_header_user.setText(f"USUARIO: {nom}")
+        self.lbl_header_user.setText(nom)
         self.lbl_header_rol.setText(rol)
         es_admin = rol in ("ADMIN", "ADMINISTRADOR")
         self.btn_header_admin.setVisible(es_admin)
@@ -6893,39 +6893,42 @@ class KostalHmiWindow(QMainWindow):
         lay.setContentsMargins(18, 16, 18, 16)
         lay.setSpacing(12)
 
-        top = QHBoxLayout()
-        top.setSpacing(10)
         lbl = QLabel("Gestión de Recetas, Matrices de Fixture y Punto Cero (Set 0)")
         lbl.setStyleSheet(f"color: {COLOR_BRAND_PRIMARY}; font-size: 16px; font-weight: 900;")
-        top.addWidget(lbl)
-        top.addStretch(1)
+        lay.addWidget(lbl)
+
+        top = QHBoxLayout()
+        top.setSpacing(12)
 
         self.combo_admin_rec = QComboBox()
-        self._aplicar_estilo_combo_receta(self.combo_admin_rec, min_height=54, min_width=360)
+        self._aplicar_estilo_combo_receta(self.combo_admin_rec, min_height=50, min_width=280)
+        self.combo_admin_rec.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.adm_rec_delegate = _AdminRecipeComboDelegate(self.combo_admin_rec, self)
         self.adm_rec_delegate.copy_requested.connect(self._admin_copy_recipe)
         self.adm_rec_delegate.select_requested.connect(self.combo_admin_rec.setCurrentText)
         self.combo_admin_rec.setItemDelegate(self.adm_rec_delegate)
         self.combo_admin_rec.currentTextChanged.connect(self._on_admin_recipe_selected)
-        top.addWidget(self.combo_admin_rec)
+        top.addWidget(self.combo_admin_rec, 1)
 
         btn_new = QPushButton("Nueva Receta")
         btn_new.setMinimumHeight(48)
-        btn_new.setMinimumWidth(165)
+        btn_new.setMinimumWidth(160)
+        btn_new.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         btn_new.setStyleSheet(
             f"background-color: {COLOR_ACCENT_CYAN}; color: white; font-size: 14px; font-weight: 900; padding: 0 18px; border-radius: 8px;"
         )
         btn_new.clicked.connect(self._admin_new_recipe)
-        top.addWidget(btn_new)
+        top.addWidget(btn_new, 0)
 
         btn_del = QPushButton("Eliminar")
         btn_del.setMinimumHeight(48)
-        btn_del.setMinimumWidth(140)
+        btn_del.setMinimumWidth(130)
+        btn_del.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         btn_del.setStyleSheet(
             f"background-color: {COLOR_ERR}; color: white; font-size: 14px; font-weight: 900; padding: 0 18px; border-radius: 8px;"
         )
         btn_del.clicked.connect(self._admin_delete_recipe)
-        top.addWidget(btn_del)
+        top.addWidget(btn_del, 0)
         lay.addLayout(top)
 
         form = QGridLayout()
