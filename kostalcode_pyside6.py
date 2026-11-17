@@ -2658,21 +2658,19 @@ class OpcUaWorker(QThread):
         target_px = int(round(x_mm * 100.0))
         target_py = int(round(y_mm * 100.0))
 
-        # Paso 1: Si había un pulso activo en el mismo trigger, bajarlo a False primero
+        # Paso 1: Bajar siempre señales de disparo previas a False y esperar >=45ms
+        # para garantizar un flanco ascendente limpio False -> True en R_TRIG de CODESYS.
         triggers_to_reset = [trig]
         if trig == "NUEVA_POSICION":
             triggers_to_reset.append("NUEVA_POS")
         if also_cruzeta and "CRUZETA" not in triggers_to_reset:
             triggers_to_reset.append("CRUZETA")
 
-        had_active_trigger = False
         for tv in triggers_to_reset:
-            if tv in active_pulses or self.sim_state.get(tv, False):
-                had_active_trigger = True
-                active_pulses.pop(tv, None)
-                self._write_single_plc_var(tv, False)
-        if had_active_trigger and self.connected:
-            self.msleep(12)
+            active_pulses.pop(tv, None)
+            self._write_single_plc_var(tv, False)
+        if self.connected and self.client:
+            self.msleep(45)
 
         # Paso 2: Escribir Velocidad (solo si cambió) y Coordenadas POS_X, POS_Y
         if vel is not None:
@@ -2683,7 +2681,7 @@ class OpcUaWorker(QThread):
                 self._last_vel_sent = vel_int
 
         echo_ok = False
-        max_attempts = 3 if (self.connected and self.client) else 1
+        max_attempts = 5 if (self.connected and self.client) else 1
         for attempt in range(1, max_attempts + 1):
             self._write_single_plc_var("POS_X", x_mm)
             self._write_single_plc_var("POS_Y", y_mm)
@@ -2691,9 +2689,10 @@ class OpcUaWorker(QThread):
                 echo_ok = True
                 break
             try:
+                self.msleep(12)
                 vals_echo = self.client.get_values([self.nodes["POS_X"], self.nodes["POS_Y"]])
-                rx_px = int(vals_echo[0] or 0)
-                rx_py = int(vals_echo[1] or 0)
+                rx_px = int(round(float(vals_echo[0] or 0) * (100.0 if self.node_types.get("POS_X") in (ua.VariantType.Float, ua.VariantType.Double) else 1.0)))
+                rx_py = int(round(float(vals_echo[1] or 0) * (100.0 if self.node_types.get("POS_Y") in (ua.VariantType.Float, ua.VariantType.Double) else 1.0)))
                 if rx_px == target_px and rx_py == target_py:
                     echo_ok = True
                     break
@@ -2701,7 +2700,7 @@ class OpcUaWorker(QThread):
                     f"[DEBUG-ECO] Discrepancia intento {attempt}/{max_attempts} en {piece_label}: "
                     f"Enviado=({target_px},{target_py}) vs PLC=({rx_px},{rx_py})"
                 )
-                self.msleep(15)
+                self.msleep(20)
             except Exception as e_echo:
                 log_debug_hmi(f"[DEBUG-ECO] Error verificando eco en {piece_label}: {e_echo}")
                 break
@@ -2841,7 +2840,7 @@ class OpcUaWorker(QThread):
                         self._write_single_plc_var("PINTADO", False)
                         dt_since_edge = now - self._last_pintado_edge_ts
                         dt_since_move = now - self._last_move_sent_ts
-                        if dt_since_edge >= 0.25 and dt_since_move >= 0.12:
+                        if dt_since_edge >= 0.35 and dt_since_move >= 0.35:
                             self._last_pintado_edge_ts = now
                             log_debug_hmi(
                                 f"[CICLO-RX] Flanco PINTADO confirmado en PLC (RX X={snap.get('POS_X', 0.0):.2f}, "
@@ -6128,6 +6127,8 @@ class KostalHmiWindow(QMainWindow):
             # Limpiar handshake PINTADO residual en el PLC, enviar primero coordenadas de la posición #1
             # y posteriormente habilitar la bandera maestra PINTAR=True para que el PLC nunca opere
             # con la coordenada anterior.
+            self.opc_worker._last_pintado = False
+            self.opc_worker._last_move_sent_ts = time.time()
             self.opc_worker.enqueue_write("PINTADO", False)
             self._enviar_pieza_actual_al_plc()
             self.opc_worker.enqueue_write("PINTAR", True)
@@ -6257,6 +6258,8 @@ class KostalHmiWindow(QMainWindow):
             self.estado_pintando = False
             self.sim_cycle_timer.stop()
             self.opc_worker.enqueue_write("PINTAR", False)
+            self.opc_worker._last_pintado = False
+            self.opc_worker._last_move_sent_ts = time.time()
             self.opc_worker.enqueue_write("PINTADO", False)
             _actualizar_produccion_empleado(self.config, self.usuario_actual, delta_ciclos=1)
             if rec_act is not None:
