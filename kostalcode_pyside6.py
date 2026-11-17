@@ -318,7 +318,7 @@ CONFIG_DEFAULT = {
     "set_0_confirmado": False,
     "vel_default": 100.0,
     "paso_jog_default": 5.0,
-    "pasadas_tampo": 2,
+    "pasadas_tampo": 1,
     "patron_pintado": "vertical",
     "idioma": "ES",
     "receta_activa": "#1 - Palanca Limpiaparabrisas",
@@ -4125,8 +4125,8 @@ class KostalHmiWindow(QMainWindow):
 
         self.velocidad_actual = float(self.config.get("vel_default", 100.0))
         self.paso_jog = float(self.config.get("paso_jog_default", 5.0))
-        self.pasadas_tampo = 2
-        self.config["pasadas_tampo"] = 2
+        self.pasadas_tampo = 1
+        self.config["pasadas_tampo"] = 1
         self.patron_pintado = self.config.get("patron_pintado", "vertical")
 
         # Matriz dinámica

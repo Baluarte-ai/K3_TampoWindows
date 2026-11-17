@@ -14,7 +14,7 @@
     "set_0_confirmado": false,
     "vel_default": 100.0,
     "paso_jog_default": 5.0,
-    "pasadas_tampo": 2,
+    "pasadas_tampo": 1,
     "patron_pintado": "vertical",
     "idioma": "ES",
     "receta_activa": "123456",
