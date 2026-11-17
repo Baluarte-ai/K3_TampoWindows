@@ -89,27 +89,32 @@ def _asegurar_teclado_tactil_nativo_windows():
 
 
 def abrir_teclado_tactil_windows(forzar=False):
-    """Solicita el despliegue del teclado táctil nativo de Windows (TabTip) a través del método de entrada del sistema."""
+    """Solicita el despliegue del teclado táctil nativo de Windows sin doble disparo/toggle."""
     global _ultimo_teclado_ts, _estado_teclado_visible
     if os.name != "nt":
         return
     ahora = time.time()
-    if not forzar and (ahora - _ultimo_teclado_ts < 0.6):
+    if not forzar and (ahora - _ultimo_teclado_ts < 0.8):
         return
     _ultimo_teclado_ts = ahora
     _estado_teclado_visible = True
 
-    # 1. Solicitar a Qt invocar el método de entrada nativo del sistema operativo
+    # 1. Solicitar a Qt invocar el método de entrada nativo (idempotente, no cierra si ya abrió)
+    im_invocado = False
     try:
         app = QApplication.instance()
         if app and hasattr(app, "inputMethod"):
             im = app.inputMethod()
             if im:
                 im.show()
+                im_invocado = True
     except Exception:
-        pass
+        im_invocado = False
 
-    # 2. Invocación directa del ejecutable táctil nativo TabTip.exe
+    if im_invocado:
+        return
+
+    # 2. Respaldo solo si Qt inputMethod no estuvo disponible
     def _async_launch():
         rutas_tabtip = [
             r"C:\Program Files\Common Files\microsoft shared\ink\TabTip.exe",
@@ -150,19 +155,34 @@ def ocultar_teclado_tactil_windows(forzar=False):
 
 
 class _AutoTouchKeyboardFilter(QObject):
-    """Filtro global que despliega automáticamente el teclado al enfocar o tocar cualquier campo de texto editable."""
+    """Filtro global que despliega automáticamente el teclado tras soltar el toque/clic en un campo editable."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pending_timer = QTimer(self)
+        self._pending_timer.setSingleShot(True)
+        self._pending_timer.timeout.connect(self._mostrar_si_enfocado)
+        self._target_widget = None
+
+    def _mostrar_si_enfocado(self):
+        w = self._target_widget
+        if w is not None:
+            try:
+                if w.hasFocus() and w.isEnabled() and not getattr(w, "isReadOnly", lambda: False)():
+                    abrir_teclado_tactil_windows()
+            except Exception:
+                pass
+
     def eventFilter(self, obj, event):
         try:
             if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)):
                 etype = event.type()
-                if etype in (
-                    QEvent.FocusIn,
-                    QEvent.MouseButtonPress,
-                    QEvent.MouseButtonRelease,
-                    QEvent.TouchBegin,
+                if etype == QEvent.MouseButtonRelease or (
+                    etype == QEvent.FocusIn and hasattr(event, "reason") and event.reason() != Qt.MouseFocusReason
                 ):
                     if obj.isEnabled() and not getattr(obj, "isReadOnly", lambda: False)() and not getattr(obj, "_no_auto_keyboard", False):
-                        abrir_teclado_tactil_windows()
+                        self._target_widget = obj
+                        self._pending_timer.start(80)
         except Exception:
             pass
         return super().eventFilter(obj, event)
