@@ -2253,6 +2253,7 @@ class OpcUaWorker(QThread):
         self.server = None
         self.server_running = False
         self.server_nodes = {}
+        self.node_types = {}
 
         # Estado interno de simulación para respuesta realista cuando no hay PLC
         self.sim_state = {
@@ -2377,6 +2378,86 @@ class OpcUaWorker(QThread):
         except Exception:
             return False
 
+    def _discover_plc_prefixes(self):
+        """Explora el árbol OPC UA del PLC para descubrir el namespace y prefijo real de PLC_PRG e IoConfig."""
+        if not self.client:
+            return None, None, None
+        targets_prg = {"POS_X", "POS_Y", "INICIO", "LISTO", "VEL_X"}
+        targets_io = {"ALARM_X", "ALARM_Y", "PE", "SENSOR_X"}
+        found_ns = None
+        found_prg = None
+        found_io = None
+        try:
+            root = self.client.get_objects_node()
+            queue = [(root, 0)]
+            visited = set()
+            max_nodes = 450
+            count = 0
+            while queue and count < max_nodes:
+                node, depth = queue.pop(0)
+                nid_str = node.nodeid.to_string()
+                if nid_str in visited:
+                    continue
+                visited.add(nid_str)
+                count += 1
+                try:
+                    bname = node.get_browse_name().Name or ""
+                except Exception:
+                    bname = ""
+                ident = getattr(node.nodeid, "Identifier", "")
+                if isinstance(ident, str):
+                    if bname in targets_prg and found_prg is None and "." in ident:
+                        found_ns = int(node.nodeid.NamespaceIndex)
+                        found_prg = ident.rsplit(".", 1)[0] + "."
+                    elif bname in targets_io and found_io is None and "." in ident:
+                        if found_ns is None:
+                            found_ns = int(node.nodeid.NamespaceIndex)
+                        found_io = ident.rsplit(".", 1)[0] + "."
+                if found_prg and found_io:
+                    break
+                if depth < 6:
+                    try:
+                        for ch in node.get_children():
+                            queue.append((ch, depth + 1))
+                    except Exception:
+                        pass
+        except Exception as e:
+            log_debug_hmi(f"[OPC-UA] Error en autodescubrimiento: {e}")
+        return found_ns, found_prg, found_io
+
+    def _link_nodes_with_prefixes(self, ns, prefix_prg, prefix_io):
+        self.nodes.clear()
+        self.optional_nodes.clear()
+        self.node_types.clear()
+        missing_nodes = []
+        for key, suffix in self.NODE_MAP.items():
+            base = prefix_io if key in self.IO_NODE_KEYS else prefix_prg
+            node_id = f"ns={ns};s={base}{suffix}"
+            candidates = [node_id]
+            if key == "S_TAMPO":
+                candidates.extend([
+                    f"ns={ns};s={prefix_prg}S.tampo",
+                    f"ns={ns};s={prefix_io}S_TAMPO",
+                ])
+            linked = None
+            for cand_id in candidates:
+                try:
+                    cand_node = self.client.get_node(cand_id)
+                    cand_node.get_value()
+                    linked = cand_node
+                    break
+                except Exception:
+                    continue
+            if linked is not None:
+                self.nodes[key] = linked
+                try:
+                    self.node_types[key] = linked.get_data_type_as_variant_type()
+                except Exception:
+                    pass
+            else:
+                missing_nodes.append(f"{key}({node_id})")
+        return missing_nodes
+
     def _connect_plc(self):
         if not OPCUA_DISPONIBLE:
             return False
@@ -2395,7 +2476,8 @@ class OpcUaWorker(QThread):
                 prefix_io = prefix_prg.replace(".GVL.", ".IoConfig_Globals_Mapping.")
             else:
                 prefix_io = "|var|WAGO 750-8212 PFC200 G2 2ETH RS.Application.IoConfig_Globals_Mapping."
-        if not self._ping_socket(ip, port, timeout=1.2):
+        if not self._ping_socket(ip, port, timeout=1.5):
+            log_debug_hmi(f"[OPC-UA] Sin respuesta TCP en {ip}:{port} (verifique cable/red/puerto 4840)")
             return False
         try:
             if self.client:
@@ -2404,37 +2486,29 @@ class OpcUaWorker(QThread):
                 except Exception:
                     pass
             url = f"opc.tcp://{ip}:{port}"
-            self.client = Client(url, timeout=2.5)
+            self.client = Client(url, timeout=3.0)
             self.client.connect()
-            self.nodes.clear()
-            self.optional_nodes.clear()
-            missing_nodes = []
-            for key, suffix in self.NODE_MAP.items():
-                base = prefix_io if key in self.IO_NODE_KEYS else prefix_prg
-                node_id = f"ns={ns};s={base}{suffix}"
-                candidates = [node_id]
-                if key == "S_TAMPO":
-                    candidates.extend([
-                        f"ns={ns};s={prefix_prg}S.tampo",
-                        f"ns={ns};s={prefix_io}S_TAMPO",
-                    ])
-                linked = None
-                for cand_id in candidates:
-                    try:
-                        cand_node = self.client.get_node(cand_id)
-                        cand_node.get_value()
-                        linked = cand_node
-                        break
-                    except Exception:
-                        continue
-                if linked is not None:
-                    self.nodes[key] = linked
-                else:
-                    missing_nodes.append(f"{key}({node_id})")
+            missing_nodes = self._link_nodes_with_prefixes(ns, prefix_prg, prefix_io)
+            if not any(k in self.nodes for k in ("POS_X", "POS_Y", "INICIO", "LISTO")):
+                log_debug_hmi(
+                    f"[OPC-UA] Prefijo ns={ns} '{prefix_prg}' no respondió; ejecutando autodescubrimiento..."
+                )
+                d_ns, d_prg, d_io = self._discover_plc_prefixes()
+                if d_prg:
+                    ns = d_ns if d_ns is not None else ns
+                    prefix_prg = d_prg
+                    if d_io:
+                        prefix_io = d_io
+                    elif ".PLC_PRG." in prefix_prg:
+                        prefix_io = prefix_prg.replace(".PLC_PRG.", ".IoConfig_Globals_Mapping.")
+                    log_debug_hmi(
+                        f"[OPC-UA] Autodescubrimiento exitoso: ns={ns}, PRG='{prefix_prg}', IO='{prefix_io}'"
+                    )
+                    missing_nodes = self._link_nodes_with_prefixes(ns, prefix_prg, prefix_io)
             if missing_nodes:
                 log_debug_hmi(f"[OPC-UA] Nodos no encontrados en PLC: {', '.join(missing_nodes)}")
             if not any(k in self.nodes for k in ("POS_X", "POS_Y", "INICIO", "LISTO")):
-                log_debug_hmi("[OPC-UA] Ningún nodo principal de PLC_PRG respondió; verifique node_prefix.")
+                log_debug_hmi("[OPC-UA] Ningún nodo principal de PLC_PRG respondió; verifique proyecto en PLC.")
                 try:
                     self.client.disconnect()
                 except Exception:
@@ -2447,6 +2521,10 @@ class OpcUaWorker(QThread):
                         opt_node = self.client.get_node(f"ns={ns};s={opt_base}{opt_key}")
                         init_opt = opt_node.get_value()
                         self.optional_nodes[opt_key] = opt_node
+                        try:
+                            self.node_types[opt_key] = opt_node.get_data_type_as_variant_type()
+                        except Exception:
+                            pass
                         if opt_key == "BTN_PINTAR":
                             self._last_btn_pintar = bool(init_opt)
                         break
@@ -2488,22 +2566,49 @@ class OpcUaWorker(QThread):
 
         try:
             if var_name in ("POS_X", "POS_Y", "HOME_X", "HOME_Y"):
-                # El PLC WAGO recibe coordenadas en centésimas de milímetro (Int32)
-                val_cent = int(round(float(value) * 100.0))
-                dv = ua.DataValue(ua.Variant(val_cent, ua.VariantType.Int32))
+                vtype = self.node_types.get(var_name, ua.VariantType.Int32)
+                if vtype in (ua.VariantType.Float, ua.VariantType.Double):
+                    dv = ua.DataValue(ua.Variant(float(value), vtype))
+                else:
+                    # El PLC WAGO recibe coordenadas en centésimas de milímetro (Int32 / Int16)
+                    val_cent = int(round(float(value) * 100.0))
+                    if vtype == ua.VariantType.Int16:
+                        val_cent = max(-32768, min(32767, val_cent))
+                    elif vtype == ua.VariantType.UInt16:
+                        val_cent = max(0, min(65535, val_cent))
+                    dv = ua.DataValue(ua.Variant(val_cent, vtype))
             elif var_name in ("VELOCIDAD_X", "VELOCIDAD_Y"):
-                val_vel = max(1, min(65535, int(round(float(value)))))
-                dv = ua.DataValue(ua.Variant(val_vel, ua.VariantType.UInt16))
+                vtype = self.node_types.get(var_name, ua.VariantType.UInt16)
+                if vtype in (ua.VariantType.Float, ua.VariantType.Double):
+                    dv = ua.DataValue(ua.Variant(float(value), vtype))
+                else:
+                    val_vel = max(1, int(round(float(value))))
+                    if vtype == ua.VariantType.Int16:
+                        val_vel = min(32767, val_vel)
+                    elif vtype == ua.VariantType.UInt16:
+                        val_vel = min(65535, val_vel)
+                    dv = ua.DataValue(ua.Variant(val_vel, vtype))
             else:
-                dv = ua.DataValue(ua.Variant(bool(value), ua.VariantType.Boolean))
+                vtype = self.node_types.get(var_name, ua.VariantType.Boolean)
+                dv = ua.DataValue(ua.Variant(bool(value), vtype))
             node.set_value(dv)
         except Exception as e:
             if var_name in self.optional_nodes:
                 self.optional_nodes.pop(var_name, None)
                 return
             log_debug_hmi(f"Error escribiendo {var_name}={value} en PLC: {e}")
-            self.connected = False
-            self.connection_Changed.emit(False, "DESCONECTADO")
+            # Verificar si el enlace sigue vivo antes de declarar desconexión total
+            session_alive = False
+            probe = self.nodes.get("LISTO") or self.nodes.get("POS_X")
+            if probe is not None:
+                try:
+                    probe.get_value()
+                    session_alive = True
+                except Exception:
+                    session_alive = False
+            if not session_alive:
+                self.connected = False
+                self.connection_Changed.emit(False, "DESCONECTADO")
 
     def _execute_atomic_move_xy(self, cmd, active_pulses):
         """
