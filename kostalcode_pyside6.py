@@ -2516,20 +2516,26 @@ class OpcUaWorker(QThread):
                 self.connected = False
                 return False
             for opt_key in ("NUEVA_POS", "M_PINTAR", "BTN_PINTAR", "AUTO"):
+                suffixes = ("M_PINTAR", "M_pintar") if opt_key == "M_PINTAR" else (opt_key,)
+                linked_opt = False
                 for opt_base in (prefix_prg, prefix_io):
-                    try:
-                        opt_node = self.client.get_node(f"ns={ns};s={opt_base}{opt_key}")
-                        init_opt = opt_node.get_value()
-                        self.optional_nodes[opt_key] = opt_node
+                    for sfx in suffixes:
                         try:
-                            self.node_types[opt_key] = opt_node.get_data_type_as_variant_type()
+                            opt_node = self.client.get_node(f"ns={ns};s={opt_base}{sfx}")
+                            init_opt = opt_node.get_value()
+                            self.optional_nodes[opt_key] = opt_node
+                            try:
+                                self.node_types[opt_key] = opt_node.get_data_type_as_variant_type()
+                            except Exception:
+                                pass
+                            if opt_key == "BTN_PINTAR":
+                                self._last_btn_pintar = bool(init_opt)
+                            linked_opt = True
+                            break
                         except Exception:
                             pass
-                        if opt_key == "BTN_PINTAR":
-                            self._last_btn_pintar = bool(init_opt)
+                    if linked_opt:
                         break
-                    except Exception:
-                        pass
             self._last_vel_sent = None
             self.connected = True
             log_debug_hmi(
@@ -2710,6 +2716,20 @@ class OpcUaWorker(QThread):
                     "[PLC-BOTON] Flanco ascendente en BTN_PINTAR detectado -> Solicitando inicio de pintado."
                 )
                 self.physical_paint_start_requested.emit()
+                # Limpiar latch en servidor OPC UA local y en el PLC (si el nodo es escribible)
+                if self.server_running and "BTN_PINTAR" in self.server_nodes:
+                    try:
+                        self.server_nodes["BTN_PINTAR"].set_value(False)
+                    except Exception:
+                        pass
+                if self.connected and "BTN_PINTAR" in self.optional_nodes:
+                    try:
+                        vtype = self.node_types.get("BTN_PINTAR", ua.VariantType.Boolean)
+                        self.optional_nodes["BTN_PINTAR"].set_value(
+                            ua.DataValue(ua.Variant(False, vtype))
+                        )
+                    except Exception:
+                        pass
         self._last_btn_pintar = bool(btn_now)
 
     def run(self):
@@ -2823,6 +2843,12 @@ class OpcUaWorker(QThread):
                         except Exception:
                             self.optional_nodes.pop("BTN_PINTAR", None)
                             btn_now = False
+                    if self.server_running and "BTN_PINTAR" in self.server_nodes:
+                        try:
+                            srv_btn = bool(self.server_nodes["BTN_PINTAR"].get_value())
+                            btn_now = btn_now or srv_btn
+                        except Exception:
+                            pass
                     snap["BTN_PINTAR"] = btn_now
                     self._process_btn_pintar_edge(btn_now, now)
 
@@ -6556,7 +6582,9 @@ class KostalHmiWindow(QMainWindow):
         self.tampo_manual_activo = True
         self.btn_tampo_manual.setEnabled(False)
         self.btn_tampo_manual.setText("Tampo Activo (2s)...")
+        self.opc_worker.enqueue_pulse("M_PINTAR", duration_ms=2000)
         self.opc_worker.enqueue_pulse("S_TAMPO", duration_ms=2000)
+        self.opc_worker.enqueue_pulse("TAMPO", duration_ms=2000)
         QTimer.singleShot(2100, self._finalizar_tampo_manual)
 
     def _finalizar_tampo_manual(self):
