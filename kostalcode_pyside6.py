@@ -4567,16 +4567,16 @@ class KostalHmiWindow(QMainWindow):
 
         hlay.addStretch(1)
 
-        # Banner de Estado General Central (ancho elástico y adaptativo para 1920x1080)
+        # Banner de Estado General Central (ancho suficiente para no recortar el texto)
         self.lbl_banner_estado = QLabel("SISTEMA LISTO PARA OPERAR")
         self.lbl_banner_estado.setAlignment(Qt.AlignCenter)
-        self.lbl_banner_estado.setMinimumWidth(200)
-        self.lbl_banner_estado.setMaximumWidth(360)
+        self.lbl_banner_estado.setMinimumWidth(260)
+        self.lbl_banner_estado.setMaximumWidth(420)
         self.lbl_banner_estado.setFixedHeight(36)
         self.lbl_banner_estado.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.lbl_banner_estado.setStyleSheet(
-            f"background-color: {COLOR_OK}; color: #FFFFFF; font-size: 12px; font-weight: 900; "
-            "padding: 0 16px; border-radius: 7px; letter-spacing: 0.5px;"
+            f"background-color: {COLOR_OK}; color: #FFFFFF; font-size: 11px; font-weight: 900; "
+            "padding: 0 14px; border-radius: 7px; letter-spacing: 0.2px;"
         )
         hlay.addWidget(self.lbl_banner_estado, 0)
 
@@ -4744,21 +4744,27 @@ class KostalHmiWindow(QMainWindow):
         # Ficha técnica con miniatura de pieza
         part_card = QFrame()
         part_card.setObjectName("SubSurface")
+        part_card.setMinimumHeight(116)
+        part_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.MinimumExpanding)
         pgrid = QHBoxLayout(part_card)
-        pgrid.setContentsMargins(8, 6, 8, 6)
-        pgrid.setSpacing(8)
+        pgrid.setContentsMargins(10, 10, 10, 10)
+        pgrid.setSpacing(10)
 
         info_left = QVBoxLayout()
-        info_left.setSpacing(2)
+        info_left.setContentsMargins(0, 2, 0, 2)
+        info_left.setSpacing(5)
         self.lbl_proc_pieza = QLabel("Pieza: -")
+        self.lbl_proc_pieza.setWordWrap(True)
         self.lbl_proc_pieza.setStyleSheet("font-size: 11px; font-weight: 800; color: #0F172A;")
         self.lbl_proc_modelo = QLabel("Modelo: -")
         self.lbl_proc_modelo.setStyleSheet("font-size: 11px; color: #334155;")
         self.lbl_proc_matriz_dim = QLabel("Matriz Fixture: 3 × 5 (15 PZ)")
+        self.lbl_proc_matriz_dim.setWordWrap(True)
         self.lbl_proc_matriz_dim.setStyleSheet("font-size: 11px; font-weight: 700; color: #0284C7;")
         self.lbl_proc_matriz_dist = QLabel("Dist. C-C: X:20.0 | Y:35.0 mm")
         self.lbl_proc_matriz_dist.setStyleSheet("font-size: 10px; color: #475569;")
         self.lbl_proc_receta_acum = QLabel("Acum. Receta: 0 pz (OK: 0 | NOK: 0 | Ciclos: 0)")
+        self.lbl_proc_receta_acum.setWordWrap(True)
         self.lbl_proc_receta_acum.setStyleSheet(
             f"font-size: 10px; font-weight: 800; color: {COLOR_BRAND_PRIMARY};"
         )
@@ -4771,12 +4777,12 @@ class KostalHmiWindow(QMainWindow):
         pgrid.addLayout(info_left, 1)
 
         self.lbl_proc_img_pieza = QLabel("[Sin imagen]")
-        self.lbl_proc_img_pieza.setFixedSize(86, 68)
+        self.lbl_proc_img_pieza.setFixedSize(84, 72)
         self.lbl_proc_img_pieza.setAlignment(Qt.AlignCenter)
         self.lbl_proc_img_pieza.setStyleSheet(
             "background-color: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 9px; color: #64748B;"
         )
-        pgrid.addWidget(self.lbl_proc_img_pieza)
+        pgrid.addWidget(self.lbl_proc_img_pieza, 0, Qt.AlignVCenter)
         cplay.addWidget(part_card)
 
         # Contador grande de Piezas Realizadas en el Jig
