@@ -4791,45 +4791,47 @@ class KostalHmiWindow(QMainWindow):
         # Ficha técnica con miniatura de pieza
         part_card = QFrame()
         part_card.setObjectName("SubSurface")
-        part_card.setMinimumHeight(116)
-        part_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.MinimumExpanding)
-        pgrid = QHBoxLayout(part_card)
-        pgrid.setContentsMargins(10, 10, 10, 10)
-        pgrid.setSpacing(10)
+        part_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        part_card_lay = QVBoxLayout(part_card)
+        part_card_lay.setContentsMargins(9, 8, 9, 8)
+        part_card_lay.setSpacing(4)
+
+        pgrid = QHBoxLayout()
+        pgrid.setContentsMargins(0, 0, 0, 0)
+        pgrid.setSpacing(8)
 
         info_left = QVBoxLayout()
-        info_left.setContentsMargins(0, 2, 0, 2)
-        info_left.setSpacing(5)
+        info_left.setContentsMargins(0, 0, 0, 0)
+        info_left.setSpacing(3)
         self.lbl_proc_pieza = QLabel("Pieza: -")
-        self.lbl_proc_pieza.setWordWrap(True)
         self.lbl_proc_pieza.setStyleSheet("font-size: 11px; font-weight: 800; color: #0F172A;")
         self.lbl_proc_modelo = QLabel("Modelo: -")
-        self.lbl_proc_modelo.setStyleSheet("font-size: 11px; color: #334155;")
+        self.lbl_proc_modelo.setStyleSheet("font-size: 10px; color: #334155;")
         self.lbl_proc_matriz_dim = QLabel("Matriz Fixture: 3 × 5 (15 PZ)")
-        self.lbl_proc_matriz_dim.setWordWrap(True)
-        self.lbl_proc_matriz_dim.setStyleSheet("font-size: 11px; font-weight: 700; color: #0284C7;")
+        self.lbl_proc_matriz_dim.setStyleSheet("font-size: 10px; font-weight: 700; color: #0284C7;")
         self.lbl_proc_matriz_dist = QLabel("Dist. C-C: X:20.0 | Y:35.0 mm")
         self.lbl_proc_matriz_dist.setStyleSheet("font-size: 10px; color: #475569;")
-        self.lbl_proc_receta_acum = QLabel("Acum. Receta: 0 pz (OK: 0 | NOK: 0 | Ciclos: 0)")
-        self.lbl_proc_receta_acum.setWordWrap(True)
-        self.lbl_proc_receta_acum.setStyleSheet(
-            f"font-size: 10px; font-weight: 800; color: {COLOR_BRAND_PRIMARY};"
-        )
 
         info_left.addWidget(self.lbl_proc_pieza)
         info_left.addWidget(self.lbl_proc_modelo)
         info_left.addWidget(self.lbl_proc_matriz_dim)
         info_left.addWidget(self.lbl_proc_matriz_dist)
-        info_left.addWidget(self.lbl_proc_receta_acum)
         pgrid.addLayout(info_left, 1)
 
         self.lbl_proc_img_pieza = QLabel("[Sin imagen]")
-        self.lbl_proc_img_pieza.setFixedSize(84, 72)
+        self.lbl_proc_img_pieza.setFixedSize(68, 58)
         self.lbl_proc_img_pieza.setAlignment(Qt.AlignCenter)
         self.lbl_proc_img_pieza.setStyleSheet(
             "background-color: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; font-size: 9px; color: #64748B;"
         )
         pgrid.addWidget(self.lbl_proc_img_pieza, 0, Qt.AlignVCenter)
+        part_card_lay.addLayout(pgrid)
+
+        self.lbl_proc_receta_acum = QLabel("Acum. Receta: 0 pz (OK: 0 | NOK: 0 | Ciclos: 0)")
+        self.lbl_proc_receta_acum.setStyleSheet(
+            f"font-size: 10px; font-weight: 800; color: {COLOR_BRAND_PRIMARY}; padding-top: 2px; border-top: 1px solid #E2E8F0;"
+        )
+        part_card_lay.addWidget(self.lbl_proc_receta_acum)
         cplay.addWidget(part_card)
 
         # Contador grande de Piezas Realizadas en el Jig
@@ -4977,7 +4979,7 @@ class KostalHmiWindow(QMainWindow):
         cplay2.addWidget(self.lbl_title_ctrl_pintado)
 
         self.btn_pintar_main = QPushButton("INICIO DE\nPINTADO\n[OFF]")
-        self.btn_pintar_main.setMinimumHeight(140)
+        self.btn_pintar_main.setMinimumHeight(105)
         self.btn_pintar_main.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_pintar_main.clicked.connect(self.alternar_pintar)
         cplay2.addWidget(self.btn_pintar_main, 1)
@@ -6131,7 +6133,7 @@ class KostalHmiWindow(QMainWindow):
             self.opc_worker._last_move_sent_ts = time.time()
             self.opc_worker.enqueue_write("PINTADO", False)
             self._enviar_pieza_actual_al_plc()
-            self.opc_worker.enqueue_write("PINTAR", True)
+            QTimer.singleShot(120, self._activar_pintar_plc_post_mov)
 
             if not self.plc_conectado:
                 self.sim_cycle_timer.start(1100)
@@ -6159,6 +6161,10 @@ class KostalHmiWindow(QMainWindow):
             )
 
         self._refresh_all_operator_ui()
+
+    def _activar_pintar_plc_post_mov(self):
+        if self.estado_pintando:
+            self.opc_worker.enqueue_write("PINTAR", True)
 
     def _enviar_pieza_actual_al_plc(self):
         if not self.matriz_coordenadas:
@@ -6256,11 +6262,14 @@ class KostalHmiWindow(QMainWindow):
             )
         if fin_jig:
             self.estado_pintando = False
+            self.estado_manual = False
+            self.estado_auto = True
             self.sim_cycle_timer.stop()
             self.opc_worker.enqueue_write("PINTAR", False)
             self.opc_worker._last_pintado = False
             self.opc_worker._last_move_sent_ts = time.time()
             self.opc_worker.enqueue_write("PINTADO", False)
+            self.opc_worker.enqueue_write("MANUAL", False)
             _actualizar_produccion_empleado(self.config, self.usuario_actual, delta_ciclos=1)
             if rec_act is not None:
                 rec_act["corridas"] = max(0, int(rec_act.get("corridas", 0) or 0)) + 1
@@ -6281,8 +6290,8 @@ class KostalHmiWindow(QMainWindow):
                 f"({self.movimientos_realizados_lote} mov × {self.piezas_por_cabezal_actual} pz/cab | "
                 f"Total={self.produccion_total}, OK={self.produccion_ok}, NOK={self.produccion_nok}). Retornando a Home."
             )
-            self.ejecutar_home_general()
-            QTimer.singleShot(1200, self._reiniciar_matriz_post_ciclo)
+            QTimer.singleShot(250, self.ejecutar_home_general)
+            QTimer.singleShot(1400, self._reiniciar_matriz_post_ciclo)
             return
 
         # Avanzar exactamente a la siguiente posición en secuencia
@@ -6537,7 +6546,12 @@ class KostalHmiWindow(QMainWindow):
         self.inp_coord_x.setText(f"{self.pos_actual_x:.1f}")
         self.inp_coord_y.setText(f"{self.pos_actual_y:.1f}")
         self.opc_worker.enqueue_move_xy(
-            self.pos_actual_x, self.pos_actual_y, self.velocidad_actual, trigger_var="HOME", pulse_ms=450
+            self.pos_actual_x,
+            self.pos_actual_y,
+            self.velocidad_actual,
+            trigger_var="HOME",
+            pulse_ms=450,
+            also_pulse_cruzeta=False,
         )
         log_debug_hmi(f"Comando HOME ejecutado -> X:{self.pos_actual_x:.2f}, Y:{self.pos_actual_y:.2f}")
 
