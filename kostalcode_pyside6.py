@@ -6785,13 +6785,12 @@ class KostalHmiWindow(QMainWindow):
         es_admin = rol in ("ADMIN", "ADMINISTRADOR")
         self.btn_header_admin.setVisible(es_admin)
         self.btn_recetario_admin_shortcut.setVisible(es_admin)
-        # En OPERACIÓN & JOG, el rol OPERADOR solo visualiza el botón MODO AUTO / MODO MANUAL
+        # En OPERACIÓN & JOG, el rol OPERADOR visualiza MODO AUTO / MODO MANUAL y el botón Ir a Home
         for attr in (
             "lbl_vel_tit",
             "inp_velocidad",
             "lbl_mms_jog",
             "jog_sub",
-            "btn_home",
             "btn_tampo_manual",
             "btn_toggle_cal",
             "jog_cero_box",
@@ -6799,6 +6798,9 @@ class KostalHmiWindow(QMainWindow):
             w = getattr(self, attr, None)
             if w is not None:
                 w.setVisible(es_admin)
+        if hasattr(self, "btn_home"):
+            self.btn_home.setVisible(True)
+            self.btn_home.setMinimumHeight(38 if es_admin else 42)
         if hasattr(self, "jog_collapsible"):
             if not es_admin and not self.jog_collapsible.is_expanded:
                 self.jog_collapsible.toggle(True)
